@@ -47,6 +47,17 @@ def _parse(value):
 
 def init_db():
     with get_db() as conn:
+        # Write-ahead logging. The database lives on an SD card in a
+        # machine that loses power without warning; WAL survives that far
+        # better than the rollback journal, and it lets the session worker
+        # read while a grant is being written instead of blocking. This
+        # setting is stored in the file, so it applies to every connection.
+        #
+        # synchronous is deliberately left at FULL. NORMAL would be faster
+        # and easier on the card, but it can lose the most recent commits
+        # on a power cut -- and those commits are payments somebody made.
+        conn.execute("PRAGMA journal_mode=WAL")
+
         # A session is a device's TIME BALANCE: active, paused, or blocked.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (

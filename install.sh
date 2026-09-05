@@ -40,6 +40,17 @@ if [ ${#WIFI_SSID} -gt 32 ]; then
     echo "Error: an SSID cannot be longer than 32 characters."
     exit 1
 fi
+
+# The regulatory domain decides which channels and power levels are legal.
+# hostapd refuses to start if this disagrees with what the adapter allows,
+# and the error does not mention the country.
+read -p "Two-letter country code for WiFi regulations [PH]: " COUNTRY_CODE
+COUNTRY_CODE=${COUNTRY_CODE:-PH}
+COUNTRY_CODE=$(echo "$COUNTRY_CODE" | tr '[:lower:]' '[:upper:]')
+if ! echo "$COUNTRY_CODE" | grep -Eq '^[A-Z]{2}$'; then
+    echo "Error: use a two-letter country code, e.g. PH, US, GB."
+    exit 1
+fi
 read -p "Static IP to assign to the AP interface (e.g. 192.168.50.1): " AP_IP
 read -p "Port for the FastAPI portal (e.g. 8000): " PORTAL_PORT
 
@@ -90,10 +101,26 @@ echo "Using DHCP range $DHCP_RANGE_START - $DHCP_RANGE_END on $AP_SUBNET.0/24"
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Operator-supplied text goes through sed, so anything it treats specially
+# has to be escaped first. An SSID containing a slash would otherwise
+# corrupt hostapd.conf rather than fail, which is far harder to diagnose.
+sed_escape() {
+    printf '%s' "$1" | sed -e 's/[&/\\]/\\&/g'
+}
+
+AP_INTERFACE_ESC=$(sed_escape "$AP_INTERFACE")
+WAN_INTERFACE_ESC=$(sed_escape "$WAN_INTERFACE")
+WIFI_SSID_ESC=$(sed_escape "$WIFI_SSID")
+
 echo
 echo "Installing system packages..."
 apt-get update
-apt-get install -y hostapd dnsmasq nftables nginx openssl python3 python3-venv python3-pip
+# libjpeg/zlib headers are only needed if pip cannot find an aarch64
+# wheel for Pillow and falls back to building it. Cheap insurance against
+# an install that dies three quarters of the way through.
+apt-get install -y hostapd dnsmasq nftables nginx openssl \
+    python3 python3-venv python3-pip \
+    libjpeg-dev zlib1g-dev iw rfkill
 
 echo "Stopping hostapd/dnsmasq while we configure (avoids port conflicts)..."
 systemctl stop hostapd 2>/dev/null || true
@@ -152,16 +179,58 @@ systemctl enable --now fake-hwclock 2>/dev/null || true
 timedatectl set-ntp true 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
 
 echo "Writing /etc/hostapd/hostapd.conf..."
-sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<WIFI_SSID>/$WIFI_SSID/" \
+mkdir -p /etc/hostapd
+sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" \
+    -e "s/<WIFI_SSID>/$WIFI_SSID_ESC/" \
+    -e "s/<COUNTRY_CODE>/$COUNTRY_CODE/" \
     "$APP_DIR/hostapd.conf" > /etc/hostapd/hostapd.conf
 
+# Debian's hostapd.service runs `hostapd ... $DAEMON_CONF`, read from
+# /etc/default/hostapd. Left unset, hostapd starts with no configuration
+# and exits immediately -- the single most common reason this kind of
+# setup "installs fine" and then has no WiFi.
+echo "Pointing hostapd at its config (/etc/default/hostapd)..."
+cat > /etc/default/hostapd <<'HOSTAPD_DEFAULT'
+DAEMON_CONF="/etc/hostapd/hostapd.conf"
+HOSTAPD_DEFAULT
+
 echo "Writing /etc/dnsmasq.conf..."
-sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<AP_IP_ADDRESS>/$AP_IP/" -e "s/<DHCP_RANGE_START>/$DHCP_RANGE_START/" -e "s/<DHCP_RANGE_END>/$DHCP_RANGE_END/" \
+sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" \
+    -e "s/<WAN_INTERFACE>/$WAN_INTERFACE_ESC/" \
+    -e "s/<AP_IP_ADDRESS>/$AP_IP/" \
+    -e "s/<DHCP_RANGE_START>/$DHCP_RANGE_START/" \
+    -e "s/<DHCP_RANGE_END>/$DHCP_RANGE_END/" \
     "$APP_DIR/dnsmasq.conf" > /etc/dnsmasq.conf
 
-echo "Assigning static IP $AP_IP to $AP_INTERFACE..."
-ip addr flush dev "$AP_INTERFACE" 2>/dev/null || true
-ip addr add "$AP_IP/24" dev "$AP_INTERFACE" 2>/dev/null || true
+# ---------------------------------------------------------------------
+# The AP interface needs its address on EVERY boot, not just today.
+# `ip addr add` lives in memory only, so a reboot would leave the adapter
+# with no address, dnsmasq unable to bind, and the portal unreachable.
+# A tiny oneshot unit does it properly, and also waits for the USB
+# adapter to enumerate and takes it away from NetworkManager first.
+# ---------------------------------------------------------------------
+echo "Installing the AP interface setup script..."
+sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" -e "s/<AP_IP_ADDRESS>/$AP_IP/" \
+    "$APP_DIR/setup_ap_interface.sh" > /usr/local/sbin/ecowifi-ap.sh
+chmod +x /usr/local/sbin/ecowifi-ap.sh
+
+# NetworkManager claims wireless interfaces by default and will fight
+# hostapd for this one. Marking it unmanaged in a conf file survives
+# reboots, unlike `nmcli device set`.
+if [ -d /etc/NetworkManager ]; then
+    echo "Telling NetworkManager to leave $AP_INTERFACE alone..."
+    mkdir -p /etc/NetworkManager/conf.d
+    cat > /etc/NetworkManager/conf.d/99-ecowifi.conf <<NM_CONF
+# $AP_INTERFACE is an access point run by hostapd. NetworkManager must
+# not touch it, or it will take the radio back and hostapd will fail.
+[keyfile]
+unmanaged-devices=interface-name:$AP_INTERFACE
+NM_CONF
+    systemctl reload NetworkManager 2>/dev/null || true
+fi
+
+echo "Bringing up $AP_INTERFACE with $AP_IP..."
+/usr/local/sbin/ecowifi-ap.sh || echo "  (will retry at boot via ecowifi-ap.service)"
 
 echo "Installing nftables setup script to /usr/local/sbin/..."
 sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<WAN_INTERFACE>/$WAN_INTERFACE/" \
@@ -188,9 +257,27 @@ NFT_TABLE=fw4
 NFT_SET=granted_macs
 EOF
 
+# The admin password is hashed straight into the database rather than
+# written to .env. It never touches disk in plain text, it is not visible
+# in `ps`, and it avoids the quoting problems a password with $ or quotes
+# in it would cause in a dotenv file.
 if [ -n "$ADMIN_PASSWORD" ]; then
-    echo "ECOWIFI_ADMIN_USERNAME=$ADMIN_USERNAME" >> "$APP_DIR/.env"
-    echo "ECOWIFI_ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$APP_DIR/.env"
+    echo "Storing admin credentials..."
+    printf '%s' "$ADMIN_PASSWORD" | (cd "$APP_DIR" && "$APP_DIR/venv/bin/python" - "$ADMIN_USERNAME" <<'PYSETUP'
+import sys
+import auth
+import database
+
+username = sys.argv[1]
+password = sys.stdin.read()
+
+database.init_db()
+salt, digest, iterations = auth.hash_password(password)
+database.store_admin_password(salt, digest, iterations)
+database.store_admin_username(username)
+print(f"  admin user '{username}' created")
+PYSETUP
+    )
 fi
 
 # The .env now holds a password, so keep it off other accounts on the box.
@@ -223,11 +310,41 @@ echo "Installing systemd services..."
 sed "s#<APP_DIR>#$APP_DIR#g; s/<PORTAL_PORT>/$PORTAL_PORT/g" \
     "$APP_DIR/systemd/ecowifi-app.service" > /etc/systemd/system/ecowifi-app.service
 cp "$APP_DIR/systemd/ecowifi-nftables.service" /etc/systemd/system/ecowifi-nftables.service
+cp "$APP_DIR/systemd/ecowifi-ap.service" /etc/systemd/system/ecowifi-ap.service
+
+# hostapd and dnsmasq are distribution units, so they are ordered after
+# the interface setup with drop-ins rather than by editing them. Both are
+# also told to retry: a USB adapter that is slow to settle should not
+# leave the machine permanently without WiFi.
+for unit in hostapd dnsmasq; do
+    mkdir -p "/etc/systemd/system/$unit.service.d"
+    cat > "/etc/systemd/system/$unit.service.d/ecowifi.conf" <<UNIT_DROPIN
+[Unit]
+After=ecowifi-ap.service
+Requires=ecowifi-ap.service
+
+[Service]
+Restart=on-failure
+RestartSec=5
+UNIT_DROPIN
+done
+
+# Journald defaults to using up to 10% of the filesystem. On an SD card
+# that is both a lot of writes and a lot of space, and this machine runs
+# unattended for months.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/ecowifi.conf <<'JOURNALD'
+[Journal]
+SystemMaxUse=100M
+SystemMaxFileSize=20M
+JOURNALD
+systemctl restart systemd-journald 2>/dev/null || true
 
 systemctl daemon-reload
 
 echo "Enabling and starting all services..."
-systemctl enable hostapd dnsmasq nginx ecowifi-nftables ecowifi-app
+systemctl enable ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app
+systemctl restart ecowifi-ap
 systemctl restart hostapd
 systemctl restart dnsmasq
 systemctl restart ecowifi-nftables
@@ -243,7 +360,7 @@ echo
 echo "Verifying services..."
 sleep 3
 FAILED=""
-for unit in hostapd dnsmasq nginx ecowifi-nftables ecowifi-app; do
+for unit in ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app; do
     if systemctl is-active --quiet "$unit"; then
         echo "  [  OK  ] $unit"
     else
@@ -261,9 +378,10 @@ if [ -n "$FAILED" ]; then
     done
     echo
     echo "Common causes:"
-    echo "  hostapd  - adapter does not support AP mode, or is rfkill-blocked"
-    echo "  dnsmasq  - something else is still on port 53 (ss -lnup | grep :53)"
-    echo "  nginx    - port 80 or 443 already in use"
+    echo "  ecowifi-ap - USB WiFi adapter not plugged in, or wrong interface name"
+    echo "  hostapd    - adapter does not support AP mode (check: iw list | grep -A10 'Supported interface modes')"
+    echo "  dnsmasq    - something else is still on port 53 (ss -lnup | grep :53)"
+    echo "  nginx      - port 80 or 443 already in use"
 fi
 
 echo
@@ -276,7 +394,7 @@ fi
 
 echo
 echo "Done. Check status with:"
-echo "  systemctl status hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
+echo "  systemctl status ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
 echo
 echo "If hostapd fails to start, check: journalctl -u hostapd -n 50"
 echo

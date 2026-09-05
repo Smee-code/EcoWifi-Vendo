@@ -1,0 +1,17 @@
+[Unit]
+Description=EcoWifi access point interface (address and link)
+# Must complete before anything that binds to the interface. hostapd and
+# dnsmasq are given matching After= drop-ins by install.sh.
+Before=hostapd.service dnsmasq.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ecowifi-ap.sh
+# The script waits up to 30s for a USB adapter to enumerate.
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -32,6 +32,7 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 ├── hostapd.conf          Template: broadcasts the open SSID
 ├── dnsmasq.conf          Template: DHCP + DNS hijack for the portal
 ├── nginx.conf            Template: portal on HTTP, admin forced to HTTPS
+├── setup_ap_interface.sh Template: brings the AP interface up at boot
 ├── setup_nftables.sh     Template: default-drop firewall + portal redirect
 ├── systemd/              Units for the app and the firewall ruleset
 └── install.sh            Interactive installer — run this on the gateway
@@ -85,8 +86,10 @@ sudo bash install.sh
 ```
 
 It asks for your interface names (it checks they exist and lists the real
-ones if you mistype), the SSID to broadcast, the AP IP address, the app
-port, and an admin username and password. It then installs hostapd,
+ones if you mistype), the SSID to broadcast, your two-letter WiFi country
+code, the AP IP address, the app port, and an admin username and password.
+The password is hashed straight into the database and never written to
+disk in plain text. It then installs hostapd,
 dnsmasq, nftables and nginx, generates a self-signed certificate, fills in
 every config template, and starts everything on boot.
 
@@ -94,8 +97,14 @@ It also clears the three things that most often break this on a fresh
 Debian-based image, none of which announce themselves clearly:
 
 - **hostapd ships masked** on Debian, so enabling it silently fails
+- **hostapd is not told where its config is** (`DAEMON_CONF` in
+  `/etc/default/hostapd`), so it starts with no configuration and exits
 - **systemd-resolved holds port 53**, so dnsmasq cannot start
 - **rfkill soft-blocks the radio**, so hostapd exits without saying why
+- **NetworkManager claims the WiFi adapter** and fights hostapd for it
+- **the AP address does not survive a reboot** unless something reassigns
+  it; a `ecowifi-ap` unit waits for the USB adapter to appear, takes it
+  away from NetworkManager, and brings it up with its address
 
 At the end it checks each service is genuinely running and tells you which
 `journalctl` command to read if one is not.
