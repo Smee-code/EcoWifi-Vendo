@@ -41,18 +41,33 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 
 ## Installing
 
-### Before you start
+### Two supported layouts
 
-You need, plugged into the board:
+The installer asks which one you are building.
 
-- a **USB WiFi adapter that supports AP mode** — this is the part that most
-  often does not work. RT5370, MT7610U and MT7612U are known good. Check
-  with `iw list | grep -A10 "Supported interface modes"` and look for `AP`.
-- a **USB-Ethernet adapter** connected to your existing router, for the
-  uplink.
+**1. USB WiFi adapter in the board.** This machine runs hostapd and is the
+access point itself. Fewer boxes, but the adapter must support AP mode and
+many do not. RT5370, MT7610U and MT7612U are known good; check with
+`iw list | grep -A10 "Supported interface modes"` and look for `AP`.
 
-The board's onboard WiFi is usually not usable as an access point, which
-is why a separate adapter is specified.
+**2. A separate access point on Ethernet.** This machine never touches a
+radio; it routes and gates whatever the AP bridges onto its segment. Any
+cheap router or AP works, and it avoids the AP-mode lottery entirely.
+
+For layout 2 the access point **must be a bridge, not a router**:
+
+- set it to Access Point or Bridge mode
+- **disable its DHCP server** — this machine serves DHCP
+- connect its **LAN** port to this machine, not its WAN port
+
+An AP left in router mode NATs its clients, so every customer arrives here
+wearing the AP's single IP and MAC. Granting one customer would grant them
+all, and revoking one would cut off everybody. `doctor.sh` warns when it
+can only see one device on the client interface, which is what that looks
+like.
+
+Either way you also need a **USB-Ethernet adapter** (AX88179 or RTL8153)
+for the uplink, unless the board has a spare onboard port.
 
 ### First contact with the board
 

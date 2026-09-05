@@ -18,14 +18,30 @@ bad()  { echo "  [FAIL] $1"; FAIL=$((FAIL + 1)); }
 warn() { echo "  [WARN] $1"; WARN=$((WARN + 1)); }
 hint() { echo "         -> $1"; }
 
+# How was this machine set up? Written by install.sh. Without it the
+# checks below would report a missing hostapd as a fault on a deployment
+# that deliberately never had one.
+WIFI_MODE="onboard"
+if [ -r /etc/ecowifi/deployment.conf ]; then
+    . /etc/ecowifi/deployment.conf
+fi
+
 echo
 echo "EcoWifi Vendo diagnostic"
 echo "========================"
+if [ "$WIFI_MODE" = "external" ]; then
+    echo "  WiFi: external access point on ${AP_INTERFACE:-unknown}"
+else
+    echo "  WiFi: USB adapter on this board (hostapd)"
+fi
 
 # ---------------------------------------------------------------- services
 echo
 echo "Services"
-for unit in ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app; do
+UNITS="ecowifi-ap dnsmasq nginx ecowifi-nftables ecowifi-app"
+[ "$WIFI_MODE" != "external" ] && UNITS="ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
+
+for unit in $UNITS; do
     if ! systemctl list-unit-files "$unit.service" >/dev/null 2>&1 ||
        ! systemctl cat "$unit.service" >/dev/null 2>&1; then
         warn "$unit is not installed"
@@ -42,9 +58,13 @@ done
 # --------------------------------------------------------------- interfaces
 echo
 echo "Network interfaces"
-AP_IFACE=$(awk -F= '/^interface=/{print $2}' /etc/hostapd/hostapd.conf 2>/dev/null)
+AP_IFACE="$AP_INTERFACE"
 if [ -z "$AP_IFACE" ]; then
-    bad "cannot read the AP interface from /etc/hostapd/hostapd.conf"
+    AP_IFACE=$(awk -F= '/^interface=/{print $2}' /etc/hostapd/hostapd.conf 2>/dev/null)
+fi
+if [ -z "$AP_IFACE" ]; then
+    bad "cannot determine the client-facing interface"
+    hint "expected /etc/ecowifi/deployment.conf or /etc/hostapd/hostapd.conf"
 else
     if ip link show "$AP_IFACE" >/dev/null 2>&1; then
         ok "AP interface $AP_IFACE exists"
@@ -65,12 +85,30 @@ else
             hint "systemctl restart ecowifi-ap"
         fi
     else
-        bad "AP interface $AP_IFACE does not exist"
-        hint "is the USB WiFi adapter plugged in? check: ip -o link show"
+        bad "client interface $AP_IFACE does not exist"
+        hint "is the adapter plugged in? check: ip -o link show"
+    fi
+
+    # With an external AP, every customer must reach this machine with
+    # their OWN MAC. If the AP is left in router mode they all arrive
+    # wearing its single address and the per-device model collapses.
+    if [ "$WIFI_MODE" = "external" ]; then
+        NEIGHBOURS=$(ip neigh show dev "$AP_IFACE" 2>/dev/null | grep -c lladdr)
+        if [ "$NEIGHBOURS" -gt 1 ]; then
+            ok "$NEIGHBOURS client device(s) visible on $AP_IFACE"
+        elif [ "$NEIGHBOURS" -eq 1 ]; then
+            warn "only one device visible on $AP_IFACE"
+            hint "if that is the access point itself, it is still in router"
+            hint "mode -- switch it to bridge/AP mode and disable its DHCP"
+        else
+            warn "no client devices seen on $AP_IFACE yet"
+            hint "normal until a phone connects through the access point"
+        fi
     fi
 fi
 
 # --------------------------------------------------------------- radio / AP
+if [ "$WIFI_MODE" != "external" ]; then
 echo
 echo "Wireless"
 if command -v rfkill >/dev/null 2>&1; then
@@ -99,6 +137,7 @@ if command -v iw >/dev/null 2>&1 && [ -n "$AP_IFACE" ]; then
     else
         warn "no interface is currently in AP mode"
     fi
+fi
 fi
 
 # ------------------------------------------------------------------- ports

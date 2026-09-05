@@ -20,8 +20,56 @@ echo "Run 'ip link show' in another terminal first if you don't know"
 echo "your interface names."
 echo
 
-read -p "AP interface (USB WiFi adapter, e.g. wlan1): " AP_INTERFACE
-read -p "WAN interface (USB-LAN adapter, e.g. eth1): " WAN_INTERFACE
+# ---------------------------------------------------------------------
+# Where does the WiFi come from? Two supported layouts:
+#
+#   1. A USB WiFi adapter in this board, driven by hostapd. Fewer boxes,
+#      but the adapter must support AP mode and many do not.
+#
+#   2. A separate access point on the end of an Ethernet cable. The Pi
+#      never touches a radio; it routes and gates traffic for whatever
+#      the AP bridges onto its segment. This is how most piso-wifi
+#      deployments are actually built.
+#
+# The difference matters beyond hostapd: in layout 2 the AP MUST be a
+# bridge with its own DHCP disabled. An AP left in router mode NATs its
+# clients, so every customer reaches this machine wearing the AP's single
+# IP and MAC -- granting one would grant everybody, and the per-device
+# model collapses.
+# ---------------------------------------------------------------------
+echo "How is the customer WiFi provided?"
+echo "  1) A USB WiFi adapter in this board (this machine runs hostapd)"
+echo "  2) A separate access point connected by Ethernet"
+echo
+read -p "Choose 1 or 2 [1]: " WIFI_MODE_CHOICE
+WIFI_MODE_CHOICE=${WIFI_MODE_CHOICE:-1}
+
+case "$WIFI_MODE_CHOICE" in
+    2)
+        WIFI_MODE="external"
+        echo
+        echo "External access point selected. This machine will not run hostapd."
+        echo
+        echo "IMPORTANT: configure the access point as a BRIDGE / dumb AP:"
+        echo "  - set it to Access Point or Bridge mode, NOT router mode"
+        echo "  - DISABLE its DHCP server (this machine serves DHCP)"
+        echo "  - connect its LAN port to this machine, not its WAN port"
+        echo
+        echo "If it stays in router mode every customer arrives with the"
+        echo "same address and MAC, and granting one grants all of them."
+        echo
+        ;;
+    *)
+        WIFI_MODE="onboard"
+        ;;
+esac
+
+if [ "$WIFI_MODE" = "external" ]; then
+    read -p "Interface the access point is plugged into (e.g. eth1): " AP_INTERFACE
+else
+    read -p "AP interface (USB WiFi adapter, e.g. wlan1): " AP_INTERFACE
+fi
+read -p "WAN interface (uplink to your router, e.g. eth0): " WAN_INTERFACE
 # A typo here is the single most common way this install goes wrong, and
 # it fails much later with an error that does not mention the typo.
 for iface in "$AP_INTERFACE" "$WAN_INTERFACE"; do
@@ -40,7 +88,7 @@ done
 # nl80211 that never mentions the real cause, and the operator has no way
 # to tell a bad adapter from a bad config.
 # ---------------------------------------------------------------------
-if command -v iw >/dev/null 2>&1; then
+if [ "$WIFI_MODE" = "onboard" ] && command -v iw >/dev/null 2>&1; then
     AP_PHY=$(iw dev "$AP_INTERFACE" info 2>/dev/null | awk '/wiphy/ {print $2}')
     if [ -n "$AP_PHY" ]; then
         if iw phy "phy$AP_PHY" info 2>/dev/null |
@@ -66,6 +114,12 @@ else
     echo "  (iw not installed yet; AP-mode support will be checked by hostapd itself)"
 fi
 
+if [ "$WIFI_MODE" = "external" ]; then
+    # The access point owns the SSID and the regulatory domain; asking
+    # here would imply this machine controls them, and it does not.
+    WIFI_SSID="(set on the access point)"
+    COUNTRY_CODE="XX"
+else
 read -p "WiFi network name (SSID) to broadcast [EcoWifi]: " WIFI_SSID
 WIFI_SSID=${WIFI_SSID:-EcoWifi}
 if [ ${#WIFI_SSID} -gt 32 ]; then
@@ -82,6 +136,7 @@ COUNTRY_CODE=$(echo "$COUNTRY_CODE" | tr '[:lower:]' '[:upper:]')
 if ! echo "$COUNTRY_CODE" | grep -Eq '^[A-Z]{2}$'; then
     echo "Error: use a two-letter country code, e.g. PH, US, GB."
     exit 1
+fi
 fi
 read -p "Static IP to assign to the AP interface (e.g. 192.168.50.1): " AP_IP
 read -p "Port for the FastAPI portal (e.g. 8000): " PORTAL_PORT
@@ -150,9 +205,16 @@ apt-get update
 # libjpeg/zlib headers are only needed if pip cannot find an aarch64
 # wheel for Pillow and falls back to building it. Cheap insurance against
 # an install that dies three quarters of the way through.
-apt-get install -y hostapd dnsmasq nftables nginx openssl \
+WIFI_PACKAGES=""
+if [ "$WIFI_MODE" = "onboard" ]; then
+    WIFI_PACKAGES="hostapd iw rfkill"
+fi
+
+# libjpeg/zlib headers are only needed if pip cannot find a wheel for
+# Pillow and falls back to building it.
+apt-get install -y dnsmasq nftables nginx openssl \
     python3 python3-venv python3-pip \
-    libjpeg-dev zlib1g-dev iw rfkill
+    libjpeg-dev zlib1g-dev $WIFI_PACKAGES
 
 echo "Stopping hostapd/dnsmasq while we configure (avoids port conflicts)..."
 systemctl stop hostapd 2>/dev/null || true
@@ -163,8 +225,10 @@ systemctl stop dnsmasq 2>/dev/null || true
 # fails and the access point never starts, with an error that says
 # nothing about masking.
 # ---------------------------------------------------------------------
-echo "Unmasking hostapd (Debian ships it masked)..."
-systemctl unmask hostapd 2>/dev/null || true
+if [ "$WIFI_MODE" = "onboard" ]; then
+    echo "Unmasking hostapd (Debian ships it masked)..."
+    systemctl unmask hostapd 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------
 # systemd-resolved listens on 127.0.0.53:53. dnsmasq wants port 53 too
@@ -210,6 +274,7 @@ apt-get install -y fake-hwclock >/dev/null 2>&1 || true
 systemctl enable --now fake-hwclock 2>/dev/null || true
 timedatectl set-ntp true 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
 
+if [ "$WIFI_MODE" = "onboard" ]; then
 echo "Writing /etc/hostapd/hostapd.conf..."
 mkdir -p /etc/hostapd
 sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" \
@@ -225,6 +290,9 @@ echo "Pointing hostapd at its config (/etc/default/hostapd)..."
 cat > /etc/default/hostapd <<'HOSTAPD_DEFAULT'
 DAEMON_CONF="/etc/hostapd/hostapd.conf"
 HOSTAPD_DEFAULT
+else
+    echo "Skipping hostapd: the access point provides the WiFi."
+fi
 
 echo "Writing /etc/dnsmasq.conf..."
 sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" \
@@ -348,6 +416,17 @@ ln -sf /etc/nginx/sites-available/ecowifi /etc/nginx/sites-enabled/ecowifi
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 
+# Record how this machine was set up. doctor.sh reads it so it does not
+# report a missing hostapd as a fault on a deployment that never had one.
+mkdir -p /etc/ecowifi
+cat > /etc/ecowifi/deployment.conf <<DEPLOY
+WIFI_MODE=$WIFI_MODE
+AP_INTERFACE=$AP_INTERFACE
+WAN_INTERFACE=$WAN_INTERFACE
+AP_IP=$AP_IP
+PORTAL_PORT=$PORTAL_PORT
+DEPLOY
+
 echo "Installing systemd services..."
 sed "s#<APP_DIR>#$APP_DIR#g; s/<PORTAL_PORT>/$PORTAL_PORT/g" \
     "$APP_DIR/systemd/ecowifi-app.service" > /etc/systemd/system/ecowifi-app.service
@@ -358,7 +437,10 @@ cp "$APP_DIR/systemd/ecowifi-ap.service" /etc/systemd/system/ecowifi-ap.service
 # the interface setup with drop-ins rather than by editing them. Both are
 # also told to retry: a USB adapter that is slow to settle should not
 # leave the machine permanently without WiFi.
-for unit in hostapd dnsmasq; do
+DROPIN_UNITS="dnsmasq"
+[ "$WIFI_MODE" = "onboard" ] && DROPIN_UNITS="hostapd dnsmasq"
+
+for unit in $DROPIN_UNITS; do
     mkdir -p "/etc/systemd/system/$unit.service.d"
     cat > "/etc/systemd/system/$unit.service.d/ecowifi.conf" <<UNIT_DROPIN
 [Unit]
@@ -385,9 +467,12 @@ systemctl restart systemd-journald 2>/dev/null || true
 systemctl daemon-reload
 
 echo "Enabling and starting all services..."
-systemctl enable ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app
+SERVICES="ecowifi-ap dnsmasq nginx ecowifi-nftables ecowifi-app"
+[ "$WIFI_MODE" = "onboard" ] && SERVICES="ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
+
+systemctl enable $SERVICES
 systemctl restart ecowifi-ap
-systemctl restart hostapd
+[ "$WIFI_MODE" = "onboard" ] && systemctl restart hostapd
 systemctl restart dnsmasq
 systemctl restart ecowifi-nftables
 systemctl restart ecowifi-app
@@ -402,7 +487,7 @@ echo
 echo "Verifying services..."
 sleep 3
 FAILED=""
-for unit in ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app; do
+for unit in $SERVICES; do
     if systemctl is-active --quiet "$unit"; then
         echo "  [  OK  ] $unit"
     else
@@ -420,7 +505,7 @@ if [ -n "$FAILED" ]; then
     done
     echo
     echo "Common causes:"
-    echo "  ecowifi-ap - USB WiFi adapter not plugged in, or wrong interface name"
+    echo "  ecowifi-ap - adapter not plugged in, or wrong interface name"
     echo "  hostapd    - adapter does not support AP mode (check: iw list | grep -A10 'Supported interface modes')"
     echo "  dnsmasq    - something else is still on port 53 (ss -lnup | grep :53)"
     echo "  nginx      - port 80 or 443 already in use"
@@ -436,12 +521,17 @@ fi
 
 echo
 echo "Done. Check status with:"
-echo "  systemctl status ecowifi-ap hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
+echo "  systemctl status $SERVICES"
 echo
 echo "If hostapd fails to start, check: journalctl -u hostapd -n 50"
 echo
 
-echo "SSID broadcasting: $WIFI_SSID"
+if [ "$WIFI_MODE" = "external" ]; then
+    echo "WiFi: provided by your access point on $AP_INTERFACE"
+    echo "      (it must be in bridge mode with its DHCP disabled)"
+else
+    echo "SSID broadcasting: $WIFI_SSID"
+fi
 echo "Customer portal:   http://$AP_IP/"
 echo "Admin dashboard:   https://$AP_IP/admin"
 echo
