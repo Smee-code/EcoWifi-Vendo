@@ -94,6 +94,20 @@
                   border-radius: 5px; padding: 7px 9px; font-size: .82rem; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .row label { font-size: .78rem; color: #9db2c6; }
+
+  /* Stacked form. Used where fields need labels and room to breathe --
+     a line of four unlabelled boxes reads as a puzzle, not a form. */
+  .form { max-width: 380px; }
+  .form .field { margin-bottom: 14px; }
+  .form label { display: block; font-size: .76rem; color: #9db2c6;
+                margin-bottom: 5px; }
+  .form input { width: 100%; padding: 9px 10px; font-size: .86rem; }
+  .form .hint { font-size: .72rem; color: #6b8299; margin: 4px 0 0; }
+  .form .sep { border-top: 1px solid #223040; margin: 18px 0 16px;
+               padding-top: 4px; }
+  .form .sep-label { font-size: .7rem; text-transform: uppercase;
+                     letter-spacing: .06em; color: #7d93a8; margin-bottom: 12px; }
+  .form button { width: 100%; padding: 10px; font-size: .84rem; }
   code { background: #0f1923; padding: 1px 6px; border-radius: 4px;
          font-size: .76rem; color: #8fd6ff; }
   .note { font-size: .75rem; color: #7d93a8; line-height: 1.5; }
@@ -202,15 +216,22 @@
           <label>Trigger name</label>
           <input id="rateMethod" placeholder="coin" size="12" autocapitalize="none"
                  spellcheck="false">
+          <label>Quantity</label>
+          <input id="rateQty" type="number" min="1" value="1" size="5">
           <label>Minutes earned</label>
           <input id="rateMinutes" type="number" min="1" placeholder="30" size="6">
-          <button class="act go" onclick="saveRate()">Save rate</button>
+          <button class="act go" onclick="saveRate()">Save tier</button>
+          <span id="rateMsg" style="font-size:.8rem"></span>
         </div>
         <p class="note pad" style="padding-top:0">
           The trigger name is what your hardware sends as
           <code>payment_method</code> to <code>POST /grant</code>. With exactly
           one method configured the device may omit it; with several it must
-          say which one fired.
+          say which one fired.<br><br>
+          <b>Quantity 1 is the base rate.</b> Add higher quantities to reward
+          bulk &mdash; 1 bottle for 30 min and 3 bottles for 2 hr means someone
+          inserting 4 gets 2.5 hr, not 2 hr. Customers are always given the
+          best-priced combination their quantity qualifies for.
         </p>
       </section>
       <section>
@@ -273,23 +294,46 @@
       <section>
         <h3>Admin credentials</h3>
         <div class="pad">
-          <p class="note" style="margin:0 0 12px">
-            Signed in as <code id="currentUser">--</code>. Fill in only what you
-            want to change &mdash; the current password is always required.
+          <p class="note" style="margin:0 0 18px">
+            Signed in as <code id="currentUser">--</code>.
           </p>
-          <div class="row">
-            <input type="password" id="pwCurrent" placeholder="Current password" size="20">
-            <input type="text" id="userNew" placeholder="New username (optional)" size="20"
-                   autocapitalize="none" spellcheck="false">
-            <input type="password" id="pwNew" placeholder="New password (optional)" size="20">
-            <input type="password" id="pwConfirm" placeholder="Confirm new password" size="20">
-            <button class="act go" onclick="changeCredentials()">Update credentials</button>
-          </div>
-          <p class="note" style="margin:12px 0 0">
+
+          <form class="form" onsubmit="event.preventDefault(); changeCredentials();">
+            <div class="field">
+              <label for="pwCurrent">Current password</label>
+              <input type="password" id="pwCurrent" autocomplete="current-password">
+              <p class="hint">Required &mdash; this is what authorises the change.</p>
+            </div>
+
+            <div class="sep"></div>
+            <p class="sep-label">Leave a field blank to keep it as it is</p>
+
+            <div class="field">
+              <label for="userNew">New username</label>
+              <input type="text" id="userNew" autocomplete="username"
+                     autocapitalize="none" spellcheck="false"
+                     placeholder="3-32 characters">
+            </div>
+
+            <div class="field">
+              <label for="pwNew">New password</label>
+              <input type="password" id="pwNew" autocomplete="new-password"
+                     placeholder="at least 8 characters">
+            </div>
+
+            <div class="field">
+              <label for="pwConfirm">Confirm new password</label>
+              <input type="password" id="pwConfirm" autocomplete="new-password">
+            </div>
+
+            <button type="submit" class="act go">Update credentials</button>
+          </form>
+
+          <p class="note" style="margin:14px 0 0;max-width:380px">
             Any change signs out every other browser that is currently logged
             in. You will stay signed in here.
           </p>
-          <p id="pwMsg" style="font-size:.8rem;margin:8px 0 0"></p>
+          <p id="pwMsg" style="font-size:.8rem;margin:8px 0 0;max-width:380px"></p>
         </div>
       </section>
     </div>
@@ -502,14 +546,36 @@ async function load() {
     ).join('') + '</tbody></table>'
   ) : '<div class="empty">No devices are blocked.</div>';
 
+  const methods = [...new Set(rates.map(r => r.payment_method))];
+  const baseOf = {};
+  rates.forEach(r => { if (r.quantity === 1) baseOf[r.payment_method] = r.minutes; });
+
   document.getElementById('ratesWrap').innerHTML = rates.length ? (
-    '<table><thead><tr><th>Trigger name</th><th>Minutes earned</th><th></th></tr></thead><tbody>' +
-    rates.map(r =>
-      '<tr><td><code>' + esc(r.payment_method) + '</code></td>' +
-      '<td>' + r.minutes_per_unit + ' min</td>' +
-      '<td>' + (rates.length > 1
-        ? '<button class="act danger" onclick="removeRate(\'' + esc(r.payment_method) + '\')">Remove</button>'
-        : '<span class="note">only method</span>') + '</td></tr>').join('') +
+    '<table><thead><tr><th>Trigger</th><th>Quantity</th><th>Minutes</th>' +
+    '<th>Value</th><th></th></tr></thead><tbody>' +
+    rates.map(r => {
+      const base = baseOf[r.payment_method];
+      const linear = base ? base * r.quantity : null;
+      let value = '<span class="note">base rate</span>';
+      if (r.quantity > 1 && linear !== null) {
+        const diff = r.minutes - linear;
+        value = diff > 0
+          ? '<span style="color:#6ee39b">+' + diff + ' min bonus</span>'
+          : (diff < 0 ? '<span style="color:#e08585">' + diff + ' min vs base</span>'
+                      : '<span class="note">same as base</span>');
+      }
+      // Removing the base tier removes the whole trigger, so label it honestly.
+      const isBase = r.quantity === 1;
+      const canRemove = !isBase || methods.length > 1;
+      return '<tr><td><code>' + esc(r.payment_method) + '</code></td>' +
+        '<td>' + r.quantity + '</td>' +
+        '<td>' + r.minutes + ' min</td>' +
+        '<td>' + value + '</td>' +
+        '<td>' + (canRemove
+          ? '<button class="act danger" onclick="removeRate(\'' + esc(r.payment_method) +
+            '\',' + r.quantity + ')">' + (isBase ? 'Remove trigger' : 'Remove tier') + '</button>'
+          : '<span class="note">only trigger</span>') + '</td></tr>';
+    }).join('') +
     '</tbody></table>'
   ) : '<div class="empty">No rates configured - nothing can be granted.</div>';
 
@@ -571,16 +637,43 @@ async function unbanMac(mac) {
 async function saveRate() {
   const method = document.getElementById('rateMethod').value.trim();
   const minutes = document.getElementById('rateMinutes').value;
-  if (!method || !minutes) { alert('Enter both a method and minutes.'); return; }
-  const { ok, data } = await post('/rates', { payment_method: method, minutes_per_unit: Number(minutes) });
-  if (!ok) alert(data.detail || 'Could not save rate');
+  const quantity = document.getElementById('rateQty').value || 1;
+  const el = document.getElementById('rateMsg');
+
+  if (!method || !minutes) {
+    el.style.color = '#e08585';
+    el.innerText = 'Enter a trigger name and the minutes it earns.';
+    return;
+  }
+
+  const { ok, data } = await post('/rates', {
+    payment_method: method,
+    quantity: Number(quantity),
+    minutes: Number(minutes)
+  });
+
+  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.innerText = ok
+    ? 'Saved: ' + data.quantity + ' x ' + data.payment_method + ' = ' + data.minutes + ' min'
+    : (data.detail || 'Could not save that tier');
+
+  if (ok) {
+    document.getElementById('rateMinutes').value = '';
+    document.getElementById('rateQty').value = 1;
+  }
   load();
 }
 
-async function removeRate(method) {
-  if (!confirm('Remove the payment method "' + method + '"?')) return;
-  const { ok, data } = await post('/rates/delete', { payment_method: method });
-  if (!ok) alert(data.detail || 'Could not remove that method');
+async function removeRate(method, quantity) {
+  const whole = !quantity || quantity === 1;
+  const what = whole
+    ? 'the trigger "' + method + '" and all of its tiers'
+    : 'the bulk tier for ' + quantity + ' x ' + method;
+  if (!confirm('Remove ' + what + '?')) return;
+
+  const { ok, data } = await post('/rates/delete',
+    { payment_method: method, quantity: quantity });
+  if (!ok) alert(data.detail || 'Could not remove that rate');
   load();
 }
 

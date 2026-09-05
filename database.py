@@ -95,10 +95,16 @@ def init_db():
             )
         """)
 
+        # A rate is a PRICE TIER: "this many of this trigger earns this
+        # much time". The quantity-1 tier is the base rate; larger tiers
+        # let the operator reward bulk without the time being a straight
+        # multiple, e.g. 1 bottle = 30 min but 5 bottles = 4 hours.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rates (
-                payment_method TEXT PRIMARY KEY,
-                minutes_per_unit INTEGER NOT NULL
+                payment_method TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                minutes INTEGER NOT NULL,
+                PRIMARY KEY (payment_method, quantity)
             )
         """)
 
@@ -200,6 +206,7 @@ def _migrate(conn):
             )
 
     _migrate_device_status(conn)
+    _migrate_rates(conn)
 
     # Old 'pending' sessions become real queue entries, so nobody who was
     # mid-claim during an upgrade loses their place.
@@ -214,6 +221,36 @@ def _migrate(conn):
         conn.execute(
             "UPDATE sessions SET status = 'blocked' WHERE mac_address = ?",
             (row["mac_address"],),
+        )
+
+
+def _migrate_rates(conn):
+    """Rebuilds a single-rate table into tiers.
+
+    The old table was one row per method (`minutes_per_unit`). Each of
+    those becomes the quantity-1 base tier, so an existing machine keeps
+    charging exactly what it charged before."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(rates)").fetchall()}
+    if "minutes_per_unit" not in cols:
+        return
+
+    old_rows = conn.execute(
+        "SELECT payment_method, minutes_per_unit FROM rates"
+    ).fetchall()
+
+    conn.execute("DROP TABLE rates")
+    conn.execute("""
+        CREATE TABLE rates (
+            payment_method TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            minutes INTEGER NOT NULL,
+            PRIMARY KEY (payment_method, quantity)
+        )
+    """)
+    for row in old_rows:
+        conn.execute(
+            "INSERT INTO rates (payment_method, quantity, minutes) VALUES (?, 1, ?)",
+            (row["payment_method"], row["minutes_per_unit"]),
         )
 
 
@@ -827,44 +864,136 @@ def get_banned_macs():
 
 # ---- rates ----
 
-def get_rate(payment_method):
+# Guards the tier solver below. Nobody is inserting a thousand bottles in
+# one go, and an unbounded value would let a bad request allocate a huge
+# table inside the request.
+MAX_QUANTITY = 500
+
+
+def get_rate(payment_method, quantity=1):
+    """Minutes earned by exactly this quantity, or None if no such tier."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT minutes_per_unit FROM rates WHERE payment_method = ?",
-            (payment_method,),
+            "SELECT minutes FROM rates WHERE payment_method = ? AND quantity = ?",
+            (payment_method, quantity),
         ).fetchone()
-        return row["minutes_per_unit"] if row else None
+        return row["minutes"] if row else None
 
 
 def get_all_rates():
+    """Every tier, cheapest quantity first within each method."""
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM rates ORDER BY payment_method").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM rates ORDER BY payment_method, quantity"
+        ).fetchall()
         return [dict(row) for row in rows]
+
+
+def get_payment_methods():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT payment_method FROM rates ORDER BY payment_method"
+        ).fetchall()
+        return [r["payment_method"] for r in rows]
+
+
+def get_rate_tiers(payment_method):
+    """{quantity: minutes} for one method."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT quantity, minutes FROM rates WHERE payment_method = ? ORDER BY quantity",
+            (payment_method,),
+        ).fetchall()
+        return {r["quantity"]: r["minutes"] for r in rows}
+
+
+def calculate_minutes(payment_method, quantity=1):
+    """Best time earned by `quantity` of this trigger.
+
+    Tiers can be combined, and the combination chosen is the one worth the
+    MOST minutes -- the customer always gets the best price their quantity
+    qualifies for. With tiers 1=30 and 3=120, four items are priced 3+1 =
+    150 minutes, not 4x30 = 120.
+
+    Solved exactly with a small dynamic program rather than greedily
+    taking the largest tier first: greedy is wrong whenever two smaller
+    bonus tiers beat one larger one, and quietly underpaying a customer is
+    the kind of bug nobody reports and everybody notices."""
+    if quantity < 1:
+        return 0
+    if quantity > MAX_QUANTITY:
+        quantity = MAX_QUANTITY
+
+    tiers = get_rate_tiers(payment_method)
+    if not tiers:
+        return 0
+
+    # best[q] = most minutes obtainable from exactly q items
+    NOT_REACHABLE = -1
+    best = [NOT_REACHABLE] * (quantity + 1)
+    best[0] = 0
+
+    for q in range(1, quantity + 1):
+        for tier_qty, tier_minutes in tiers.items():
+            if tier_qty <= q and best[q - tier_qty] != NOT_REACHABLE:
+                candidate = best[q - tier_qty] + tier_minutes
+                if candidate > best[q]:
+                    best[q] = candidate
+
+    if best[quantity] != NOT_REACHABLE:
+        return best[quantity]
+
+    # No exact combination (which needs a quantity-1 tier to be missing).
+    # Fall back to the best price for FEWER items rather than refusing to
+    # credit anything -- the customer has already paid.
+    for q in range(quantity - 1, 0, -1):
+        if best[q] != NOT_REACHABLE:
+            return best[q]
+    return 0
 
 
 def has_rates():
     """True once the operator has defined at least one payment trigger.
 
     Nothing can be granted before this: without a rate there is no answer
-    to 'how much time is one payment worth'."""
+    to how much time a payment is worth."""
     with get_db() as conn:
         return conn.execute("SELECT COUNT(*) AS c FROM rates").fetchone()["c"] > 0
 
 
-def delete_rate(payment_method):
+def delete_rate(payment_method, quantity=None):
+    """Removes one tier, or the whole method when quantity is None.
+
+    Removing the quantity-1 tier removes the method entirely: without a
+    base rate the remaining tiers could not price an ordinary single
+    payment, which is the case that actually happens."""
     with get_db() as conn:
-        cur = conn.execute(
-            "DELETE FROM rates WHERE payment_method = ?", (payment_method,)
-        )
+        base_exists = conn.execute(
+            'SELECT 1 FROM rates WHERE payment_method = ? AND quantity = 1',
+            (payment_method,),
+        ).fetchone() is not None
+
+        # Only cascade when the base tier is really there. Asking to remove
+        # a tier that does not exist must not take the whole method with it.
+        if quantity is None or (quantity == 1 and base_exists):
+            cur = conn.execute(
+                'DELETE FROM rates WHERE payment_method = ?', (payment_method,)
+            )
+        else:
+            cur = conn.execute(
+                "DELETE FROM rates WHERE payment_method = ? AND quantity = ?",
+                (payment_method, quantity),
+            )
         return cur.rowcount > 0
 
 
-def set_rate(payment_method, minutes_per_unit):
+def set_rate(payment_method, minutes, quantity=1):
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO rates (payment_method, minutes_per_unit) VALUES (?, ?)
-               ON CONFLICT(payment_method) DO UPDATE SET minutes_per_unit = excluded.minutes_per_unit""",
-            (payment_method, minutes_per_unit),
+            """INSERT INTO rates (payment_method, quantity, minutes) VALUES (?, ?, ?)
+               ON CONFLICT(payment_method, quantity)
+               DO UPDATE SET minutes = excluded.minutes""",
+            (payment_method, quantity, minutes),
         )
 
 

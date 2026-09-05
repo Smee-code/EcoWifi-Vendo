@@ -57,6 +57,10 @@
           <input id="method" placeholder="bottle" autocapitalize="none"
                  spellcheck="false" autofocus>
         </div>
+        <div class="narrow" style="flex:0 0 90px">
+          <label for="quantity">Quantity</label>
+          <input id="quantity" type="number" min="1" value="1">
+        </div>
         <div class="narrow">
           <label for="minutes">Minutes earned</label>
           <input id="minutes" type="number" min="1" placeholder="30">
@@ -66,7 +70,9 @@
         The name is what your hardware sends as <code>payment_method</code> to
         <code>POST /grant</code>. Examples: <code>bottle</code>,
         <code>coin</code>, <code>coin_5php</code>, <code>token</code>,
-        <code>card</code>.
+        <code>card</code>.<br><br>
+        Start with quantity <b>1</b> &mdash; that is the base rate. Once it
+        exists you can add bulk tiers, e.g. 3 bottles for the price of 4.
       </p>
       <button type="submit" id="addBtn">Add this rate</button>
     </form>
@@ -96,10 +102,11 @@ async function loadRates() {
   const rates = await res.json();
 
   document.getElementById('rateList').innerHTML = rates.length
-    ? '<table><thead><tr><th>Payment trigger</th><th style="text-align:right">Minutes</th>' +
-      '</tr></thead><tbody>' + rates.map(r =>
+    ? '<table><thead><tr><th>Payment trigger</th><th>Qty</th>' +
+      '<th style="text-align:right">Minutes</th></tr></thead><tbody>' + rates.map(r =>
         '<tr><td><code>' + esc(r.payment_method) + '</code></td>' +
-        '<td class="v">' + r.minutes_per_unit + ' min</td></tr>').join('') +
+        '<td>' + r.quantity + '</td>' +
+        '<td class="v">' + r.minutes + ' min</td></tr>').join('') +
       '</tbody></table>'
     : '';
 
@@ -118,7 +125,11 @@ async function addRate(e) {
   const res = await fetch('/rates', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ payment_method: method, minutes_per_unit: Number(minutes) })
+    body: JSON.stringify({
+      payment_method: method,
+      quantity: Number(document.getElementById('quantity').value || 1),
+      minutes: Number(minutes)
+    })
   });
   btn.disabled = false;
 
@@ -128,8 +139,8 @@ async function addRate(e) {
 
   document.getElementById('method').value = '';
   document.getElementById('minutes').value = '';
-  say('Added ' + data.payment_method + ' = ' + data.minutes_per_unit + ' min. ' +
-      'Add another, or open the dashboard.', true);
+  say('Added ' + data.quantity + ' x ' + data.payment_method + ' = ' +
+      data.minutes + ' min. Add a bulk tier, or open the dashboard.', true);
   loadRates();
 }
 

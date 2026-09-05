@@ -501,37 +501,52 @@ def _resolve_payment_method(requested):
     single rate is configured -- otherwise the device has to say which
     trigger fired, because the gateway cannot guess what the customer
     actually paid with."""
-    rates = database.get_all_rates()
+    methods = database.get_payment_methods()
 
     if requested:
         requested = str(requested).strip()
-        if not any(r["payment_method"] == requested for r in rates):
+        if requested not in methods:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unknown payment method {requested!r}. Configured: " +
-                       ", ".join(r["payment_method"] for r in rates),
+                       ", ".join(methods),
             )
         return requested
 
-    if len(rates) == 1:
-        return rates[0]["payment_method"]
+    if len(methods) == 1:
+        return methods[0]
 
     raise HTTPException(
         status_code=400,
         detail="Several payment methods are configured, so the request must name "
-               "one: " + ", ".join(r["payment_method"] for r in rates),
+               "one: " + ", ".join(methods),
     )
 
-def _grant_oldest_pending(payment_method=None):
+def _grant_oldest_pending(payment_method=None, quantity=1):
     """Shared by the real validator endpoint and the dev simulator.
 
     `payment_method` names which configured rate to apply, so one gateway
     can front several triggers (a coin slot and a bottle chute, say). When
     the caller does not say, the single configured rate is used, which
-    keeps simple one-trigger machines simple."""
+    keeps simple one-trigger machines simple.
+
+    `quantity` is how many were taken in this one payment. It is priced
+    against the operator's tiers, so bulk bonuses apply."""
     _require_rates()
 
     payment_method = _resolve_payment_method(payment_method)
+
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="quantity must be a whole number")
+    if quantity < 1:
+        raise HTTPException(status_code=400, detail="quantity must be at least 1")
+    if quantity > database.MAX_QUANTITY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"quantity cannot exceed {database.MAX_QUANTITY}",
+        )
 
     pending = database.get_oldest_pending()
     if not pending:
@@ -546,8 +561,8 @@ def _grant_oldest_pending(payment_method=None):
         logger.warning(f"Discarded claim from banned device {mac_address}")
         raise HTTPException(status_code=403, detail="That device has been blocked by the operator.")
 
-    minutes_per_unit = database.get_rate(payment_method)
-    if minutes_per_unit is None:
+    earned_minutes = database.calculate_minutes(payment_method, quantity)
+    if earned_minutes <= 0:
         raise HTTPException(
             status_code=400,
             detail=f"No rate is configured for payment method {payment_method!r}.",
@@ -558,20 +573,23 @@ def _grant_oldest_pending(payment_method=None):
     if not database.mark_claim_granted(pending["id"]):
         raise HTTPException(status_code=409, detail="That claim was just granted")
 
-    added = database.credit_time(mac_address, minutes_per_unit, payments=1)
+    added = database.credit_time(mac_address, earned_minutes, payments=quantity)
     credited_minutes = added // 60
-    database.log_transaction(mac_address, payment_method, 1, credited_minutes)
+    database.log_transaction(mac_address, payment_method, quantity, credited_minutes)
     router_updated = network_service.allow_mac(mac_address)
 
     session = database.get_session(mac_address)
     return {
         **session,
         "router_updated": router_updated,
+        "payment_method": payment_method,
+        "quantity": quantity,
+        "minutes_earned": earned_minutes,
         "minutes_credited": credited_minutes,
         # True when the session cap swallowed some or all of the payment,
         # so the portal can explain the shortfall instead of appearing
         # to lose time.
-        "capped": added < minutes_per_unit * 60,
+        "capped": added < earned_minutes * 60,
     }
 
 
@@ -581,15 +599,20 @@ async def grant(payload: dict | None = None):
     payment -- a bottle validator, coin acceptor, card reader or anything
     else. Grants whichever device is currently the oldest pending claim.
 
-    Optional body: {"payment_method": "coin"} to name which configured
-    rate applies. Required only when more than one rate exists.
+    Optional body:
+        payment_method  which configured trigger fired. Required only when
+                        more than one is configured.
+        quantity        how many were taken in this one payment (default
+                        1). Priced against the operator's tiers, so bulk
+                        bonuses apply automatically.
 
     NOTE: this assumes normally one pending claim at a time. If the
     validator can identify WHICH waiting customer paid, this endpoint
     should be extended to accept and use that identifier rather than
     always taking the oldest claim."""
     payload = payload or {}
-    return _grant_oldest_pending(payload.get("payment_method"))
+    return _grant_oldest_pending(payload.get("payment_method"),
+                                 payload.get("quantity", 1))
 
 
 @app.post("/dev/simulate-payment")
@@ -601,7 +624,8 @@ async def dev_simulate_payment(payload: dict | None = None):
         raise HTTPException(status_code=404, detail="Not found")
     payload = payload or {}
     logger.info("[DEV] Simulating a validated payment")
-    return _grant_oldest_pending(payload.get("payment_method"))
+    return _grant_oldest_pending(payload.get("payment_method"),
+                                 payload.get("quantity", 1))
 
 
 # ---- vouchers ----
@@ -946,40 +970,75 @@ async def list_rates():
 
 @app.post("/rates")
 async def update_rate(payload: dict, _=Depends(require_admin)):
-    payment_method = payload.get("payment_method")
-    minutes_per_unit = payload.get("minutes_per_unit")
-    if not payment_method or minutes_per_unit is None:
-        raise HTTPException(status_code=400, detail="payment_method and minutes_per_unit are required")
+    """Creates or updates one price tier.
 
-    minutes_per_unit = int(minutes_per_unit)
-    if minutes_per_unit <= 0:
-        raise HTTPException(status_code=400, detail="minutes_per_unit must be greater than zero")
+    quantity defaults to 1, which is the base rate for that trigger.
+    Higher quantities are bulk tiers: 3 bottles for 2 hours, and so on."""
+    payment_method = (payload.get("payment_method") or "").strip()
+    # minutes_per_unit is accepted as an alias so older callers keep working.
+    minutes = payload.get("minutes", payload.get("minutes_per_unit"))
 
-    database.set_rate(payment_method, minutes_per_unit)
-    return {"payment_method": payment_method, "minutes_per_unit": minutes_per_unit}
+    if not payment_method or minutes is None:
+        raise HTTPException(
+            status_code=400, detail="payment_method and minutes are required")
+
+    try:
+        minutes = int(minutes)
+        quantity = int(payload.get("quantity", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="minutes and quantity must be whole numbers")
+
+    if minutes <= 0:
+        raise HTTPException(status_code=400, detail="minutes must be greater than zero")
+    if quantity < 1:
+        raise HTTPException(status_code=400, detail="quantity must be at least 1")
+    if quantity > database.MAX_QUANTITY:
+        raise HTTPException(
+            status_code=400, detail=f"quantity cannot exceed {database.MAX_QUANTITY}")
+
+    tiers = database.get_rate_tiers(payment_method)
+    if quantity > 1 and 1 not in tiers:
+        raise HTTPException(
+            status_code=400,
+            detail="Set the base rate first: add a quantity of 1 for "
+                   f"{payment_method!r} before adding bulk tiers.",
+        )
+
+    database.set_rate(payment_method, minutes, quantity)
+    return {"payment_method": payment_method, "quantity": quantity, "minutes": minutes}
 
 
 @app.post("/rates/delete")
 async def delete_rate(payload: dict, _=Depends(require_admin)):
-    """Removes a payment method. The last one cannot be removed, because a
-    machine with no rates cannot grant anything."""
+    """Removes one bulk tier, or a whole payment method.
+
+    Omit quantity (or pass 1) to remove the method entirely. The last
+    remaining method cannot be removed, because a machine with no rates
+    cannot grant anything."""
     payment_method = (payload.get("payment_method") or "").strip()
     if not payment_method:
         raise HTTPException(status_code=400, detail="payment_method is required")
 
-    rates = database.get_all_rates()
-    if len(rates) <= 1:
+    quantity = payload.get("quantity")
+    if quantity is not None:
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="quantity must be a whole number")
+
+    removing_method = quantity is None or quantity == 1
+    if removing_method and len(database.get_payment_methods()) <= 1:
         raise HTTPException(
             status_code=400,
             detail="This is the only payment method. Add another before removing it, "
                    "or the machine cannot grant any time.",
         )
 
-    if not database.delete_rate(payment_method):
-        raise HTTPException(status_code=404, detail="No such payment method")
+    if not database.delete_rate(payment_method, quantity):
+        raise HTTPException(status_code=404, detail="No such rate")
 
-    logger.warning(f"Rate removed: {payment_method}")
-    return {"payment_method": payment_method, "deleted": True}
+    logger.warning(f"Rate removed: {payment_method} (quantity {quantity or 'all'})")
+    return {"payment_method": payment_method, "quantity": quantity, "deleted": True}
 
 
 @app.get("/admin/portal-text")

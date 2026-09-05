@@ -410,6 +410,7 @@ let pendingClaim = false;
 let payments = 0;
 let capSeconds = 0;
 let unitMinutes = 30;
+let allRates = [];
 let unitLabel = 'payment';
 let configured = true;
 let text = {};
@@ -521,23 +522,26 @@ function say(msg, kind) { strip('statusStrip', msg, kind); }
 function renderRates() {
   // Tiers are derived from the live rate and the real session cap, so
   // this panel cannot drift from what the machine actually gives you.
-  const rows = [];
-  const mk = (n) => {
-    const mins = n * unitMinutes;
-    const label = n + ' ' + unitLabel + (n === 1 ? '' : 's');
-    // Only say hours when it IS whole hours. "1.3 hr" reads worse than
-    // "80 min" and makes people do arithmetic to check they were charged
-    // correctly.
-    const time = (mins >= 60 && mins % 60 === 0) ? (mins / 60) + ' hr' : mins + ' min';
-    return { label, time, note: '' };
-  };
-  rows.push(mk(1));
-  rows.push(mk(2));
-  rows.push(mk(4));
-  if (capSeconds && unitMinutes) {
-    const capUnits = Math.floor(capSeconds / 60 / unitMinutes);
-    if (capUnits > 4) rows.push({ ...mk(capUnits), note: 'Session maximum' });
-  }
+  // Only say hours when it IS whole hours: "1.3 hr" reads worse than
+  // "80 min" and makes people do arithmetic to check what they were given.
+  const fmt = (mins) =>
+    (mins >= 60 && mins % 60 === 0) ? (mins / 60) + ' hr' : mins + ' min';
+
+  // Show the tiers the operator actually configured rather than invented
+  // multiples: advertising a bulk bonus at the wrong price would make the
+  // machine look like it short-changed people.
+  const rows = allRates.map(r => {
+    const base = allRates.find(
+      b => b.payment_method === r.payment_method && b.quantity === 1);
+    const bonus = base && r.quantity > 1 && r.minutes > base.minutes * r.quantity;
+    return {
+      label: r.quantity + ' ' + r.payment_method + (r.quantity === 1 ? '' : 's'),
+      time: fmt(r.minutes),
+      note: bonus ? 'bonus - beats ' + fmt(base.minutes * r.quantity) : ''
+    };
+  });
+
+  if (!rows.length) rows.push({ label: 'Not set up yet', time: '--', note: '' });
 
   document.getElementById('ratesLead').innerText =
     'Each ' + unitLabel + ' adds ' + unitMinutes + ' minutes to your session.';
@@ -628,12 +632,13 @@ function applyText(t) {
 async function loadRates() {
   try {
     const rates = await (await fetch('/rates')).json();
-    if (rates.length) {
-      // The portal shows one headline rate. With several triggers
-      // configured, the cheapest is the honest one to advertise.
-      const cheapest = rates.reduce((a, b) =>
-        a.minutes_per_unit <= b.minutes_per_unit ? a : b);
-      unitMinutes = cheapest.minutes_per_unit;
+    allRates = rates;
+    const bases = rates.filter(r => r.quantity === 1);
+    if (bases.length) {
+      // The portal headlines one trigger. With several configured, the
+      // cheapest base rate is the honest one to advertise.
+      const cheapest = bases.reduce((a, b) => a.minutes <= b.minutes ? a : b);
+      unitMinutes = cheapest.minutes;
       unitLabel = cheapest.payment_method;
     }
   } catch (e) { /* keep the defaults */ }
