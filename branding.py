@@ -18,9 +18,28 @@ byte-for-byte read of a small PNG.
 import io
 import logging
 
-from PIL import Image
-
 logger = logging.getLogger(__name__)
+
+# Pillow is OPTIONAL. It is needed only to process a new upload, and a
+# gateway that cannot resize a logo must still be able to take payments.
+# Importing it at module scope without a guard meant a failed install --
+# no aarch64 wheel, no compiler, out of disk -- stopped the whole
+# application from starting, trading the entire product for a picture.
+#
+# The shipped logos are pre-processed PNGs on disk, so branding still
+# displays normally without Pillow. Only replacing one needs it.
+try:
+    from PIL import Image
+    AVAILABLE = True
+    UNAVAILABLE_REASON = None
+except Exception as _exc:      # ImportError, or a broken native build
+    Image = None
+    AVAILABLE = False
+    UNAVAILABLE_REASON = str(_exc)
+    logger.warning(
+        "Pillow is not available (%s). Logo uploads are disabled; every "
+        "other function is unaffected.", UNAVAILABLE_REASON,
+    )
 
 # Anything at or above this on every channel is treated as background.
 WHITE_CUTOFF = 250
@@ -129,6 +148,12 @@ def process_logo(raw: bytes, variant: str, strip_background: bool = True) -> byt
     """Returns optimised PNG bytes ready to serve.
 
     Raises LogoError with an operator-readable message on bad input."""
+    if not AVAILABLE:
+        raise LogoError(
+            "Image processing is not available on this machine, so logos "
+            "cannot be changed. Install Pillow and restart: "
+            "venv/bin/pip install Pillow"
+        )
     if not raw:
         raise LogoError("No image was uploaded.")
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -180,7 +205,12 @@ def _has_meaningful_alpha(image, had_alpha):
 
 
 def describe(raw: bytes):
-    """Size and dimensions, for showing the operator what is stored."""
+    """Size and dimensions, for showing the operator what is stored.
+
+    Falls back to the byte count alone when Pillow is missing, so the
+    dashboard still reports something useful."""
+    if not AVAILABLE:
+        return {"width": None, "height": None, "bytes": len(raw)}
     try:
         image = Image.open(io.BytesIO(raw))
         return {"width": image.width, "height": image.height, "bytes": len(raw)}

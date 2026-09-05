@@ -34,6 +34,38 @@ for iface in "$AP_INTERFACE" "$WAN_INTERFACE"; do
     fi
 done
 
+# ---------------------------------------------------------------------
+# Does this adapter actually support AP mode? Most USB WiFi dongles do
+# not. Without this check hostapd fails much later with a message about
+# nl80211 that never mentions the real cause, and the operator has no way
+# to tell a bad adapter from a bad config.
+# ---------------------------------------------------------------------
+if command -v iw >/dev/null 2>&1; then
+    AP_PHY=$(iw dev "$AP_INTERFACE" info 2>/dev/null | awk '/wiphy/ {print $2}')
+    if [ -n "$AP_PHY" ]; then
+        if iw phy "phy$AP_PHY" info 2>/dev/null |
+             awk '/Supported interface modes/{f=1;next} /^\t[A-Za-z]/{f=0} f' |
+             grep -qw '\* AP'; then
+            echo "  $AP_INTERFACE supports AP mode."
+        else
+            echo
+            echo "WARNING: $AP_INTERFACE does not report AP mode support."
+            echo "hostapd will almost certainly fail to start with this adapter."
+            echo "Check what it can do with:  iw phy phy$AP_PHY info"
+            echo
+            read -p "Continue anyway? [y/N]: " AP_CONFIRM
+            case "$AP_CONFIRM" in
+                [yY]*) echo "  continuing at your request" ;;
+                *) echo "Stopping. Use an AP-capable adapter (RT5370, MT7610U, MT7612U)."; exit 1 ;;
+            esac
+        fi
+    else
+        echo "  (could not identify the wireless phy for $AP_INTERFACE; skipping AP-mode check)"
+    fi
+else
+    echo "  (iw not installed yet; AP-mode support will be checked by hostapd itself)"
+fi
+
 read -p "WiFi network name (SSID) to broadcast [EcoWifi]: " WIFI_SSID
 WIFI_SSID=${WIFI_SSID:-EcoWifi}
 if [ ${#WIFI_SSID} -gt 32 ]; then
@@ -249,6 +281,16 @@ sysctl -p
 echo "Setting up Python virtual environment..."
 python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+
+# Pillow is optional: the app runs without it, only logo uploads stop
+# working. Say so plainly rather than letting the operator discover it
+# when an upload fails months later.
+if "$APP_DIR/venv/bin/python" -c "import PIL" >/dev/null 2>&1; then
+    echo "  image processing available (logo uploads will work)"
+else
+    echo "  NOTE: Pillow did not install. Everything works except changing"
+    echo "        logos. To fix later: $APP_DIR/venv/bin/pip install Pillow"
+fi
 
 echo "Writing $APP_DIR/.env..."
 cat > "$APP_DIR/.env" <<EOF

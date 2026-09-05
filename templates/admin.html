@@ -510,6 +510,13 @@ function renderSystemStatus(sys) {
       ' min total - session expiries were shifted to match']);
   }
 
+  const ip = sys.image_processing || {};
+  if (!ip.available) {
+    rows.push(['Image processing', 'warn',
+      'unavailable (' + esc(ip.reason || 'Pillow not installed') +
+      ') - logos cannot be changed, everything else works']);
+  }
+
   rows.push(['Database', 'ok', (g.database_kb === null ? 'unknown' : g.database_kb + ' KB')]);
   rows.push(['App uptime', 'ok', fmtDuration(g.app_uptime_seconds)]);
 
@@ -779,7 +786,17 @@ async function savePortalText() {
 // ---- branding ----
 function renderLogos(data) {
   const guidance = data.guidance || {};
+
+  const warn = document.getElementById('logoPanels');
+  if (data.uploads_available === false) {
+    warn.innerHTML =
+      '<div class="note" style="background:#4a2c14;color:#ffcf99;padding:11px 13px;' +
+      'border-radius:6px;margin-bottom:14px">Image processing is not available on ' +
+      'this machine (' + esc(data.uploads_unavailable_reason || '') + '), so logos ' +
+      'cannot be changed. The logos already installed still display normally.</div>';
+  }
   document.getElementById('logoPanels').innerHTML =
+    (data.uploads_available === false ? warn.innerHTML : '') +
     '<div class="logos">' + ['large', 'small'].map(v => {
       const info = (data.logos || {})[v] || {};
       const label = v === 'large' ? 'Large screens (tablet / desktop)'

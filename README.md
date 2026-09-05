@@ -32,6 +32,7 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 ├── hostapd.conf          Template: broadcasts the open SSID
 ├── dnsmasq.conf          Template: DHCP + DNS hijack for the portal
 ├── nginx.conf            Template: portal on HTTP, admin forced to HTTPS
+├── doctor.sh             Read-only diagnostic for a deployed gateway
 ├── setup_ap_interface.sh Template: brings the AP interface up at boot
 ├── setup_nftables.sh     Template: default-drop firewall + portal redirect
 ├── systemd/              Units for the app and the firewall ruleset
@@ -129,6 +130,11 @@ sudo nft list ruleset | head -40
 # clock sane? (sessions depend on it)
 timedatectl
 ```
+
+If anything is wrong, run the diagnostic. It changes nothing and names
+the specific cause rather than a generic failure:
+
+
 
 Then connect a phone to the SSID. It should show the sign-in notification
 and land on the portal. If it connects but no portal appears, check

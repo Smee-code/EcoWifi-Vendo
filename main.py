@@ -756,6 +756,10 @@ async def system_status(_=Depends(require_admin)):
         "configured": database.has_rates(),
         "gateway": system_monitor.summary(database.DB_PATH),
         "clock": clock.status(),
+        "image_processing": {
+            "available": branding.AVAILABLE,
+            "reason": branding.UNAVAILABLE_REASON,
+        },
         "firewall": {
             "dev_mode": network_service.DEV_MODE,
             "granted_count": len(fw_granted),
@@ -1090,6 +1094,8 @@ async def delete_rate(payload: dict, _=Depends(require_admin)):
 async def get_branding(_=Depends(require_admin)):
     return {
         "logos": database.logo_summary(),
+        "uploads_available": branding.AVAILABLE,
+        "uploads_unavailable_reason": branding.UNAVAILABLE_REASON,
         "guidance": {
             "large": "Shown across the top of the portal on tablets and "
                      "desktops. A wide horizontal lockup works best.",
@@ -1117,6 +1123,16 @@ async def upload_logo(variant: str, request: Request, _=Depends(require_admin)):
 
     if variant not in database.LOGO_VARIANTS:
         raise HTTPException(status_code=404, detail="Unknown logo variant")
+
+    if not branding.AVAILABLE:
+        # 503 rather than 500: the request is fine, this machine just
+        # cannot do it. Everything else still works.
+        raise HTTPException(
+            status_code=503,
+            detail="Image processing is unavailable on this machine "
+                   f"({branding.UNAVAILABLE_REASON}). Logos cannot be changed, "
+                   "but the rest of the gateway is unaffected.",
+        )
 
     strip = request.query_params.get("strip", "1") != "0"
 
