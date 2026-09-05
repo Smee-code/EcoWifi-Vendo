@@ -133,12 +133,12 @@ if command -v nft >/dev/null 2>&1; then
             bad "granted_macs set missing - nobody can ever be granted access"
             hint "systemctl restart ecowifi-nftables"
         fi
-        if nft list chain inet nat prerouting 2>/dev/null | grep -q "redirect"; then
+        if nft list chain inet fw4 prerouting 2>/dev/null | grep -q "redirect"; then
             ok "captive portal redirect rule present"
         else
             bad "no portal redirect rule - clients will not see the portal"
         fi
-        if nft list chain inet nat postrouting 2>/dev/null | grep -q "masquerade"; then
+        if nft list chain inet fw4 postrouting 2>/dev/null | grep -q "masquerade"; then
             ok "NAT masquerade rule present"
         else
             bad "no masquerade rule - granted clients get no internet"
