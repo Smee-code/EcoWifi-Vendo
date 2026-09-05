@@ -22,6 +22,18 @@ echo
 
 read -p "AP interface (USB WiFi adapter, e.g. wlan1): " AP_INTERFACE
 read -p "WAN interface (USB-LAN adapter, e.g. eth1): " WAN_INTERFACE
+# A typo here is the single most common way this install goes wrong, and
+# it fails much later with an error that does not mention the typo.
+for iface in "$AP_INTERFACE" "$WAN_INTERFACE"; do
+    if ! ip link show "$iface" >/dev/null 2>&1; then
+        echo
+        echo "Error: no interface named '$iface' on this machine."
+        echo "Available interfaces:"
+        ip -o link show | awk -F': ' '{print "  " $2}'
+        exit 1
+    fi
+done
+
 read -p "WiFi network name (SSID) to broadcast [EcoWifi]: " WIFI_SSID
 WIFI_SSID=${WIFI_SSID:-EcoWifi}
 if [ ${#WIFI_SSID} -gt 32 ]; then
@@ -86,6 +98,58 @@ apt-get install -y hostapd dnsmasq nftables nginx openssl python3 python3-venv p
 echo "Stopping hostapd/dnsmasq while we configure (avoids port conflicts)..."
 systemctl stop hostapd 2>/dev/null || true
 systemctl stop dnsmasq 2>/dev/null || true
+
+# ---------------------------------------------------------------------
+# Debian ships hostapd MASKED. Without this, `systemctl enable hostapd`
+# fails and the access point never starts, with an error that says
+# nothing about masking.
+# ---------------------------------------------------------------------
+echo "Unmasking hostapd (Debian ships it masked)..."
+systemctl unmask hostapd 2>/dev/null || true
+
+# ---------------------------------------------------------------------
+# systemd-resolved listens on 127.0.0.53:53. dnsmasq wants port 53 too
+# and refuses to start with "address already in use". Turning off just
+# the stub listener leaves name resolution working for the Pi itself.
+# ---------------------------------------------------------------------
+if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+    echo "Freeing port 53 from systemd-resolved (needed by dnsmasq)..."
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat > /etc/systemd/resolved.conf.d/ecowifi.conf <<'RESOLVED'
+# dnsmasq serves DNS for portal clients and needs port 53. The stub
+# listener is disabled rather than the whole service, so the gateway can
+# still resolve names for itself (apt, NTP).
+[Resolve]
+DNSStubListener=no
+RESOLVED
+    systemctl restart systemd-resolved
+    # /etc/resolv.conf may point at the stub that no longer listens.
+    if [ -L /etc/resolv.conf ]; then
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# A soft rfkill block stops hostapd with no useful message. Common on
+# fresh SBC images.
+# ---------------------------------------------------------------------
+if command -v rfkill >/dev/null 2>&1; then
+    echo "Clearing any rfkill block on the wireless radio..."
+    rfkill unblock wifi 2>/dev/null || true
+    rfkill unblock all 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------
+# No battery-backed clock on these boards. fake-hwclock saves the time at
+# shutdown and restores it at boot, so the machine starts somewhere near
+# reality instead of 1970; NTP then corrects it properly. The app also
+# detects the correction and shifts session expiries, so customers keep
+# the time they paid for either way (see clock.py).
+# ---------------------------------------------------------------------
+echo "Setting up timekeeping (no RTC on this board)..."
+apt-get install -y fake-hwclock >/dev/null 2>&1 || true
+systemctl enable --now fake-hwclock 2>/dev/null || true
+timedatectl set-ntp true 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
 
 echo "Writing /etc/hostapd/hostapd.conf..."
 sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<WIFI_SSID>/$WIFI_SSID/" \
@@ -169,6 +233,46 @@ systemctl restart dnsmasq
 systemctl restart ecowifi-nftables
 systemctl restart ecowifi-app
 systemctl restart nginx
+
+# ---------------------------------------------------------------------
+# Check what actually came up. `systemctl restart` returning 0 does not
+# mean a unit stayed running, and a silent half-install is worse than a
+# loud failure.
+# ---------------------------------------------------------------------
+echo
+echo "Verifying services..."
+sleep 3
+FAILED=""
+for unit in hostapd dnsmasq nginx ecowifi-nftables ecowifi-app; do
+    if systemctl is-active --quiet "$unit"; then
+        echo "  [  OK  ] $unit"
+    else
+        echo "  [ FAIL ] $unit"
+        FAILED="$FAILED $unit"
+    fi
+done
+
+if [ -n "$FAILED" ]; then
+    echo
+    echo "These services did not start:$FAILED"
+    echo "Look at the reason with:"
+    for unit in $FAILED; do
+        echo "  journalctl -u $unit -n 30 --no-pager"
+    done
+    echo
+    echo "Common causes:"
+    echo "  hostapd  - adapter does not support AP mode, or is rfkill-blocked"
+    echo "  dnsmasq  - something else is still on port 53 (ss -lnup | grep :53)"
+    echo "  nginx    - port 80 or 443 already in use"
+fi
+
+echo
+echo "Checking the portal answers..."
+if curl -fsS -m 5 "http://127.0.0.1/" >/dev/null 2>&1; then
+    echo "  [  OK  ] portal responds through nginx"
+else
+    echo "  [ FAIL ] portal did not respond on http://127.0.0.1/"
+fi
 
 echo
 echo "Done. Check status with:"

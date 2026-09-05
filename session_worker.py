@@ -2,6 +2,7 @@ import threading
 import time
 import logging
 
+import clock
 import database
 import network_service
 
@@ -12,6 +13,23 @@ logger = logging.getLogger(__name__)
 # timestamp, so the interval affects how promptly access is cut, not how
 # accurately time is measured. A late sweep cannot hand out free time.
 CHECK_INTERVAL_SECONDS = 10
+
+
+def _correct_for_clock_jumps():
+    """Keeps expiries honest across NTP steps.
+
+    Runs before the expiry sweep, not after: acting on stale expiries and
+    only then noticing the clock moved would cut people off first and
+    apologise afterwards."""
+    delta = clock.check_drift()
+    if not delta:
+        return
+
+    shifted = database.shift_all_expiries(delta)
+    logger.warning(
+        "Clock jumped %.0fs; shifted %d session expiry time(s) to match.",
+        delta, shifted,
+    )
 
 
 def _check_sessions():
@@ -30,6 +48,7 @@ def _check_sessions():
 def _run_loop():
     while True:
         try:
+            _correct_for_clock_jumps()
             _check_sessions()
         except Exception as e:
             logger.error(f"Error in session worker loop: {e}")
@@ -37,5 +56,6 @@ def _run_loop():
 
 
 def start():
+    clock.anchor()
     thread = threading.Thread(target=_run_loop, daemon=True)
     thread.start()

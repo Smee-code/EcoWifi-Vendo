@@ -26,6 +26,7 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 ├── system_monitor.py     Gateway health checks for the dashboard
 ├── session_worker.py     Background thread: revokes expired sessions
 ├── branding.py           Logo processing: resize + background removal
+├── clock.py              Absorbs NTP jumps on a board with no RTC
 ├── templates/            portal, admin dashboard, login, first-run setup
 ├── assets/               Shipped default logos
 ├── hostapd.conf          Template: broadcasts the open SSID
@@ -38,23 +39,117 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 
 ## Installing
 
-Run on the gateway machine itself, as root:
+### Before you start
+
+You need, plugged into the board:
+
+- a **USB WiFi adapter that supports AP mode** — this is the part that most
+  often does not work. RT5370, MT7610U and MT7612U are known good. Check
+  with `iw list | grep -A10 "Supported interface modes"` and look for `AP`.
+- a **USB-Ethernet adapter** connected to your existing router, for the
+  uplink.
+
+The board's onboard WiFi is usually not usable as an access point, which
+is why a separate adapter is specified.
+
+### First contact with the board
+
+If you have only just flashed Armbian:
+
+1. Connect the board to your router by Ethernet and power it on.
+2. Find its address from your router's client list, or:
+   ```
+   ping armbian.local
+   ```
+3. SSH in. Armbian's first login is `root` with password `1234`, and it
+   forces you to set a new password and create a user on first boot:
+   ```
+   ssh root@<board-ip>
+   ```
+4. Get the time right before anything else. These boards have no
+   battery-backed clock, so a fresh one can boot years out of date:
+   ```
+   timedatectl set-ntp true
+   timedatectl        # check "System clock synchronized: yes"
+   ```
+
+### Install
+
+Run on the board itself, as root:
 
 ```
+sudo apt update && sudo apt install -y git
 git clone https://github.com/Smee-code/EcoWifi-Vendo.git
 cd EcoWifi-Vendo
 sudo bash install.sh
 ```
 
-It asks for your interface names, the SSID to broadcast, the AP IP address,
-the app port, and an admin username and password. It then installs
-hostapd, dnsmasq, nftables and nginx, generates a self-signed certificate,
-fills in every config template, and starts everything on boot.
+It asks for your interface names (it checks they exist and lists the real
+ones if you mistype), the SSID to broadcast, the AP IP address, the app
+port, and an admin username and password. It then installs hostapd,
+dnsmasq, nftables and nginx, generates a self-signed certificate, fills in
+every config template, and starts everything on boot.
+
+It also clears the three things that most often break this on a fresh
+Debian-based image, none of which announce themselves clearly:
+
+- **hostapd ships masked** on Debian, so enabling it silently fails
+- **systemd-resolved holds port 53**, so dnsmasq cannot start
+- **rfkill soft-blocks the radio**, so hostapd exits without saying why
+
+At the end it checks each service is genuinely running and tells you which
+`journalctl` command to read if one is not.
 
 Afterwards:
 
 - Customer portal — `http://<AP_IP>/`
 - Admin dashboard — `https://<AP_IP>/admin`
+
+### Check it is really working
+
+```
+# every service up?
+systemctl is-active hostapd dnsmasq nginx ecowifi-nftables ecowifi-app
+
+# is the SSID on the air?
+iw dev
+
+# firewall ruleset applied?
+sudo nft list ruleset | head -40
+
+# clock sane? (sessions depend on it)
+timedatectl
+```
+
+Then connect a phone to the SSID. It should show the sign-in notification
+and land on the portal. If it connects but no portal appears, check
+dnsmasq is answering DNS and the nftables redirect exists.
+
+**The one thing to verify first if nothing works:** every customer must
+appear with their own IP, not the proxy's. On the board:
+
+```
+curl -s http://127.0.0.1/status | grep -o '"ip":"[^"]*"'
+```
+
+From the Pi itself that correctly reads `127.0.0.1`. From a connected
+phone it must show the phone's DHCP address. If a phone shows
+`127.0.0.1`, nginx is not passing the real client address, MAC resolution
+cannot work, and nothing else will either.
+
+### Timekeeping
+
+These boards have no real-time clock. `install.sh` sets up `fake-hwclock`
+(so the board boots near the right time) and enables NTP (so it corrects
+once the uplink is up).
+
+The app handles the correction itself: sessions are stored as absolute
+expiry times, so an NTP step of hours or days would otherwise cut every
+paying customer off at once, or grant them days of free access. The worker
+compares wall-clock movement against a monotonic clock, and when they
+disagree it shifts every stored expiry by the same amount. A customer with
+twenty minutes left keeps twenty minutes left. The dashboard reports any
+corrections it absorbed.
 
 ## First run
 

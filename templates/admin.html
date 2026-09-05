@@ -495,6 +495,21 @@ function renderSystemStatus(sys) {
     rows.push(['Disk', g.disk.percent_used > 90 ? 'bad' : (g.disk.percent_used > 75 ? 'warn' : 'ok'),
       g.disk.free_mb + ' MB free (' + g.disk.percent_used + '% used)']);
   }
+  // Timekeeping. On a board with no RTC this is the difference between
+  // sessions working and every customer being cut off at once.
+  const c = sys.clock || {};
+  rows.push(['Clock', c.looks_unsynced ? 'bad' : 'ok',
+    c.looks_unsynced
+      ? 'NOT SYNCED (' + (c.utc_now || '').slice(0, 10) + ') - waiting for NTP'
+      : 'synced, ' + (c.utc_now || '').replace('T', ' ').slice(0, 19) + ' UTC']);
+
+  if (c.jumps_corrected) {
+    rows.push(['Clock corrections', 'warn',
+      c.jumps_corrected + ' jump(s) absorbed, ' +
+      Math.round((c.total_correction_seconds || 0) / 60) +
+      ' min total - session expiries were shifted to match']);
+  }
+
   rows.push(['Database', 'ok', (g.database_kb === null ? 'unknown' : g.database_kb + ' KB')]);
   rows.push(['App uptime', 'ok', fmtDuration(g.app_uptime_seconds)]);
 

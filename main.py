@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 import auth
 import branding
+import clock
 import database
 import network_service
 import session_worker
@@ -754,6 +755,7 @@ async def system_status(_=Depends(require_admin)):
         "payment_device": device,
         "configured": database.has_rates(),
         "gateway": system_monitor.summary(database.DB_PATH),
+        "clock": clock.status(),
         "firewall": {
             "dev_mode": network_service.DEV_MODE,
             "granted_count": len(fw_granted),

@@ -572,6 +572,35 @@ def resume_session(mac_address):
     return get_session(mac_address)
 
 
+def shift_all_expiries(delta_seconds):
+    """Moves every running session's expiry by the same amount.
+
+    Called when the system clock jumps (see clock.py). Shifting rather
+    than recomputing is what preserves each customer's REMAINING time: a
+    session with twenty minutes left still has twenty minutes left, even
+    though the date it expires on has changed."""
+    if not delta_seconds:
+        return 0
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT mac_address, expires_at FROM sessions WHERE expires_at IS NOT NULL"
+        ).fetchall()
+
+        shifted = 0
+        for row in rows:
+            current = _parse(row["expires_at"])
+            if current is None:
+                continue
+            conn.execute(
+                "UPDATE sessions SET expires_at = ? WHERE mac_address = ?",
+                (_iso(current + timedelta(seconds=delta_seconds)), row["mac_address"]),
+            )
+            shifted += 1
+
+    return shifted
+
+
 def expire_session(mac_address):
     with get_db() as conn:
         conn.execute(
