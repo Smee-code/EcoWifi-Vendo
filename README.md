@@ -131,10 +131,17 @@ sudo nft list ruleset | head -40
 timedatectl
 ```
 
-If anything is wrong, run the diagnostic. It changes nothing and names
+If anything is wrong, run the diagnostic. It changes nothing, and it names
 the specific cause rather than a generic failure:
 
+```
+sudo bash doctor.sh
+```
 
+It checks services, the AP interface's address and link state, rfkill,
+AP-mode support, who holds ports 53/80/443, the nftables rules, IP
+forwarding, clock sync, whether the app answers and whether a payment rate
+exists — and prints the command to run for anything that failed.
 
 Then connect a phone to the SSID. It should show the sign-in notification
 and land on the portal. If it connects but no portal appears, check
