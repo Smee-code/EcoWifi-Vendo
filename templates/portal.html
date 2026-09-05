@@ -51,6 +51,16 @@
     * { animation: none !important; transition: none !important; }
   }
 
+  /* Logo band across the top. Hidden until a logo actually loads, so a
+     machine with no branding does not reserve empty space. */
+  .logoband { display: none; justify-content: center; padding: 4px 0 2px; }
+  .logoband img { max-width: min(340px, 78vw); max-height: 92px; height: auto;
+                  width: auto; display: block; }
+  /* The wide lockup is a DESKTOP element only. Phones get the square
+     badge in the header instead, so showing both would be duplicate
+     branding on the smallest screen. The .on class is honoured only
+     inside the desktop media query below. */
+
   .shell { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 16px; }
   .grid  { display: grid; grid-template-columns: 1fr; align-items: start; gap: 20px; }
 
@@ -60,7 +70,11 @@
   .logo { display: flex; align-items: center; gap: 10px; }
   .mark { width: 32px; height: 32px; flex: none; border-radius: 10px; background: var(--green);
           display: flex; align-items: center; justify-content: center; color: var(--lime);
-          font: 800 16px var(--display); }
+          font: 800 16px var(--display); overflow: hidden; }
+  .mark img { width: 100%; height: 100%; object-fit: contain; }
+  /* The uploaded badge carries its own shape, so drop the green tile
+     behind it rather than framing one logo inside another. */
+  .mark.has-logo { background: transparent; border-radius: 0; }
   .wordmark { display: flex; flex-direction: column; line-height: 1.15; }
   .wordmark b { font: 700 16px var(--display); letter-spacing: -.01em; }
   .wordmark span { font: 500 11px var(--body); color: var(--muted); letter-spacing: .02em; }
@@ -244,6 +258,12 @@
     .shell { max-width: 1080px; }
     .grid { grid-template-columns: 246px minmax(0,1fr); }
     .mhead { display: none; }
+    .logoband.on { display: flex; padding: 2px 0 6px; }
+    .logoband img { max-width: 360px; max-height: 104px; }
+    /* The band already carries the name, so drop the sidebar wordmark
+       rather than showing the same branding twice on one screen. */
+    body.has-band .side .brand { display: none; }
+    body.has-band .side { padding-top: 12px; }
     .side { display: flex; position: sticky; top: 24px; flex-direction: column; gap: 6px;
             padding: 16px 14px; border-radius: 24px; background: rgba(255,255,255,.72);
             border: 1px solid rgba(18,38,31,.07); backdrop-filter: blur(8px); }
@@ -263,9 +283,13 @@
 <body>
 <div class="shell">
 
+  <div class="logoband" id="logoBand">
+    <img id="logoLarge" alt="">
+  </div>
+
   <div class="mhead">
     <div class="logo">
-      <div class="mark">E</div>
+      <div class="mark" id="markSmall">E</div>
       <div class="wordmark"><b>EcoWifi Vendo</b><span class="tagline">Pay on the machine. Get online.</span></div>
     </div>
     <button class="iconbtn" onclick="go('info')" aria-label="Connection details">i</button>
@@ -611,6 +635,7 @@ async function sync() {
     capSeconds = data.session_cap_seconds || 0;
     configured = data.configured !== false;
     if (data.portal_text) applyText(data.portal_text);
+    applyBranding(data.branding);
 
     const wasPending = pendingClaim;
 
@@ -634,6 +659,52 @@ async function sync() {
     paint();
     if (screen === 'info') renderConn();
   } catch (e) { /* keep the last known state on screen */ }
+}
+
+function applyBranding(b) {
+  if (!b) return;
+
+  // Desktop band: the wide lockup. Revealed only once the image has
+  // actually decoded, so a missing or broken logo leaves no empty gap.
+  const band = document.getElementById('logoBand');
+  const wide = document.getElementById('logoLarge');
+  if (b.large && b.large.present) {
+    const src = '/logo/large?v=' + encodeURIComponent(b.large.version);
+    if (wide.getAttribute('src') !== src) {
+      wide.onload = () => {
+        band.classList.add('on');
+        document.body.classList.add('has-band');
+      };
+      wide.onerror = () => {
+        band.classList.remove('on');
+        document.body.classList.remove('has-band');
+      };
+      wide.src = src;
+    }
+  } else {
+    band.classList.remove('on');
+    document.body.classList.remove('has-band');
+    wide.removeAttribute('src');
+  }
+
+  // Phone header: the square badge replaces the "E" tile.
+  const mark = document.getElementById('markSmall');
+  if (b.small && b.small.present) {
+    const src = '/logo/small?v=' + encodeURIComponent(b.small.version);
+    if (!mark.querySelector('img')) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.onerror = () => {
+        mark.classList.remove('has-logo');
+        mark.textContent = 'E';
+      };
+      mark.textContent = '';
+      mark.appendChild(img);
+      mark.classList.add('has-logo');
+    }
+    const img = mark.querySelector('img');
+    if (img && img.getAttribute('src') !== src) img.src = src;
+  }
 }
 
 function applyText(t) {

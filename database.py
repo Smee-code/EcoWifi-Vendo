@@ -1,4 +1,7 @@
+import hashlib
+import io
 import json
+import os
 import sqlite3
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -152,6 +155,19 @@ def init_db():
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 ip TEXT
+            )
+        """)
+
+        # Operator branding. Held in the database rather than on disk so a
+        # backup captures the whole machine -- restoring onto a fresh SD
+        # card brings the logos back with everything else.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assets (
+                name TEXT PRIMARY KEY,
+                content_type TEXT NOT NULL,
+                data BLOB NOT NULL,
+                updated_at TEXT NOT NULL,
+                is_default INTEGER DEFAULT 0
             )
         """)
 
@@ -995,6 +1011,102 @@ def set_rate(payment_method, minutes, quantity=1):
                DO UPDATE SET minutes = excluded.minutes""",
             (payment_method, quantity, minutes),
         )
+
+
+# ---- assets (logos) ----
+
+LOGO_VARIANTS = ("large", "small")
+
+
+def _asset_name(variant):
+    return f"logo_{variant}"
+
+
+def get_asset(name):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM assets WHERE name = ?", (name,)).fetchone()
+        return dict(row) if row else None
+
+
+def set_asset(name, data, content_type="image/png", is_default=False):
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO assets (name, content_type, data, updated_at, is_default)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(name) DO UPDATE SET
+                   content_type = excluded.content_type,
+                   data = excluded.data,
+                   updated_at = excluded.updated_at,
+                   is_default = excluded.is_default""",
+            (name, content_type, data, _iso(_now()), 1 if is_default else 0),
+        )
+
+
+def delete_asset(name):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM assets WHERE name = ?", (name,))
+        return cur.rowcount > 0
+
+
+def get_logo(variant):
+    return get_asset(_asset_name(variant))
+
+
+def set_logo(variant, data, is_default=False):
+    set_asset(_asset_name(variant), data, "image/png", is_default)
+
+
+def delete_logo(variant):
+    return delete_asset(_asset_name(variant))
+
+
+def _version_of(timestamp):
+    return hashlib.sha1((timestamp or "").encode()).hexdigest()[:8]
+
+
+def logo_summary():
+    """What the dashboard and the portal need to know about branding.
+
+    `version` changes whenever a logo does, and the portal puts it in the
+    image URL. Without it a customer whose browser cached the old logo
+    would keep seeing it after the operator uploaded a new one."""
+    summary = {}
+    for variant in LOGO_VARIANTS:
+        row = get_logo(variant)
+        summary[variant] = {
+            "present": row is not None,
+            "is_default": bool(row["is_default"]) if row else False,
+            "updated_at": row["updated_at"] if row else None,
+            "bytes": len(row["data"]) if row else 0,
+            # Short digest of the timestamp. It only has to CHANGE when the
+            # logo does; slicing the timestamp produced strings like
+            # "00+0000", which are unreadable and can repeat.
+            "version": _version_of(row["updated_at"]) if row else "0",
+        }
+    return summary
+
+
+def seed_default_logos(assets_dir):
+    """Installs the shipped logos on a machine that has none.
+
+    Only ever fills a gap: an operator's own upload is never replaced,
+    and a logo they deliberately removed stays removed, because removal
+    leaves a row-less variant that this would otherwise resurrect. That
+    is why the deleted state is recorded in settings."""
+    for variant in LOGO_VARIANTS:
+        if get_logo(variant) is not None:
+            continue
+        if get_setting(f"logo_{variant}_cleared") == "1":
+            continue
+
+        path = os.path.join(assets_dir, f"default-logo-{variant}.png")
+        try:
+            with open(path, "rb") as handle:
+                set_logo(variant, handle.read(), is_default=True)
+        except OSError:
+            # Shipping without the file is not fatal; the portal falls
+            # back to its text wordmark.
+            pass
 
 
 # ---- admin credentials and sessions ----

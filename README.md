@@ -25,7 +25,9 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 ├── network_service.py    nftables control + MAC resolution via ARP
 ├── system_monitor.py     Gateway health checks for the dashboard
 ├── session_worker.py     Background thread: revokes expired sessions
+├── branding.py           Logo processing: resize + background removal
 ├── templates/            portal, admin dashboard, login, first-run setup
+├── assets/               Shipped default logos
 ├── hostapd.conf          Template: broadcasts the open SSID
 ├── dnsmasq.conf          Template: DHCP + DNS hijack for the portal
 ├── nginx.conf            Template: portal on HTTP, admin forced to HTTPS
@@ -106,6 +108,21 @@ dashboard as-is, so any hardware can report whatever it has.
 
 Session time is stored as an expiry timestamp rather than a counter, so the
 countdown stays correct across restarts and supports pause/resume.
+
+## Branding
+
+The portal shows an operator logo in two forms: a wide lockup centred
+across the top on tablets and desktops, and a square badge in the header
+on phones. Both are uploaded from the dashboard under **Logo**.
+
+Uploads are processed once, at upload time. They are resized for a
+captive portal, and their white background is removed by flooding inward
+from the edges, so white *inside* the artwork survives. A 1.4 MB export
+on a white card becomes a ~90 KB transparent PNG. Images that already
+have real transparency are left alone.
+
+Logos live in the database, so a backup captures them along with
+everything else.
 
 ## Admin dashboard
 

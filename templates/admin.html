@@ -108,6 +108,21 @@
   .form .sep-label { font-size: .7rem; text-transform: uppercase;
                      letter-spacing: .06em; color: #7d93a8; margin-bottom: 12px; }
   .form button { width: 100%; padding: 10px; font-size: .84rem; }
+
+  /* Logo previews sit on the portal background, not the dashboard one,
+     so the operator sees what a customer will actually see. */
+  .logos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+           gap: 16px; }
+  .logocard { border: 1px solid #223040; border-radius: 8px; overflow: hidden; }
+  .logocard h4 { margin: 0; padding: 10px 14px; font-size: .78rem;
+                 background: #1b2836; color: #9db2c6; border-bottom: 1px solid #223040; }
+  .logocard .body { padding: 14px; }
+  .logoprev { background: #e9ece6; border-radius: 6px; min-height: 110px;
+              display: flex; align-items: center; justify-content: center;
+              padding: 12px; margin-bottom: 12px; }
+  .logoprev img { max-width: 100%; max-height: 96px; }
+  .logoprev .none { color: #7d8b82; font-size: .78rem; }
+  .logocard .meta { font-size: .72rem; color: #7d93a8; margin: 0 0 10px; }
   code { background: #0f1923; padding: 1px 6px; border-radius: 4px;
          font-size: .76rem; color: #8fd6ff; }
   .note { font-size: .75rem; color: #7d93a8; line-height: 1.5; }
@@ -137,6 +152,7 @@
     <a data-panel="vouchers" data-title="Vouchers"><span class="ic">&#9635;</span> Vouchers</a>
     <a data-panel="rates" data-title="Rates"><span class="ic">&#8986;</span> Rates</a>
     <a data-panel="portaltext" data-title="Portal text"><span class="ic">&#9998;</span> Portal text</a>
+    <a data-panel="branding" data-title="Logo"><span class="ic">&#9683;</span> Logo</a>
     <a data-panel="transactions" data-title="Transactions"><span class="ic">&#8801;</span> Transactions</a>
     <a data-panel="backup" data-title="Backup"><span class="ic">&#8681;</span> Backup</a>
     <a data-panel="settings" data-title="Settings"><span class="ic">&#9881;</span> Settings</a>
@@ -259,6 +275,21 @@
             Save wording
           </button>
           <span id="portalTextMsg" style="font-size:.8rem;margin-left:8px"></span>
+        </div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="branding">
+      <section>
+        <h3>Portal logo</h3>
+        <div class="pad">
+          <p class="note" style="margin:0 0 16px;max-width:680px">
+            Shown to customers on the captive portal. Uploads are resized and
+            have their white background removed automatically, so a logo
+            exported on a white card still sits cleanly on the portal.
+            PNG or JPEG, up to 12 MB.
+          </p>
+          <div id="logoPanels"></div>
         </div>
       </section>
     </div>
@@ -730,6 +761,82 @@ async function savePortalText() {
   if (ok) loadPortalText();
 }
 
+// ---- branding ----
+function renderLogos(data) {
+  const guidance = data.guidance || {};
+  document.getElementById('logoPanels').innerHTML =
+    '<div class="logos">' + ['large', 'small'].map(v => {
+      const info = (data.logos || {})[v] || {};
+      const label = v === 'large' ? 'Large screens (tablet / desktop)'
+                                  : 'Small screens (phones)';
+      const preview = info.present
+        ? '<img src="/logo/' + v + '?v=' + encodeURIComponent(info.version) + '" alt="">'
+        : '<span class="none">No logo &mdash; the portal shows its text wordmark</span>';
+      const meta = info.present
+        ? (info.is_default ? 'Shipped default' : 'Uploaded') +
+          ' &middot; ' + Math.round(info.bytes / 1024) + ' KB'
+        : 'Not set';
+
+      return '<div class="logocard"><h4>' + label + '</h4><div class="body">' +
+        '<div class="logoprev">' + preview + '</div>' +
+        '<p class="meta">' + meta + '</p>' +
+        '<p class="note" style="margin:0 0 12px">' + esc(guidance[v] || '') + '</p>' +
+        '<div class="row">' +
+          '<input type="file" id="logoFile_' + v + '" accept="image/png,image/jpeg">' +
+          '<button class="act go" onclick="uploadLogo(\'' + v + '\')">Upload</button>' +
+          '<button class="act" onclick="resetLogo(\'' + v + '\', false)">Restore default</button>' +
+          '<button class="act danger" onclick="resetLogo(\'' + v + '\', true)">Remove</button>' +
+        '</div>' +
+        '<p id="logoMsg_' + v + '" style="font-size:.78rem;margin:8px 0 0"></p>' +
+        '</div></div>';
+    }).join('') + '</div>';
+}
+
+function logoMsg(variant, text, good) {
+  const el = document.getElementById('logoMsg_' + variant);
+  if (!el) return;
+  el.style.color = good ? '#4fd18b' : '#e08585';
+  el.innerHTML = text;
+}
+
+async function loadBranding() {
+  renderLogos(await getJSON('/admin/branding'));
+}
+
+async function uploadLogo(variant) {
+  const input = document.getElementById('logoFile_' + variant);
+  const file = input && input.files[0];
+  if (!file) { logoMsg(variant, 'Choose an image file first.', false); return; }
+
+  logoMsg(variant, 'Uploading and processing...', true);
+  const res = await fetch('/admin/logo/' + variant, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file
+  });
+  if (res.status === 401) { window.location = '/admin/login'; return; }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { logoMsg(variant, data.detail || 'Upload failed.', false); return; }
+
+  const before = Math.round(data.original_bytes / 1024);
+  const after = Math.round(data.stored.bytes / 1024);
+  logoMsg(variant,
+    'Saved &mdash; ' + data.stored.width + '&times;' + data.stored.height +
+    ', ' + before + ' KB reduced to ' + after + ' KB.', true);
+  loadBranding();
+}
+
+async function resetLogo(variant, remove) {
+  if (remove && !confirm('Remove the ' + variant + ' logo? The portal falls back ' +
+                         'to its text wordmark.')) return;
+
+  const { ok, data } = await post('/admin/logo/' + variant + '/reset', { remove: remove });
+  if (!ok) { logoMsg(variant, data.detail || 'Could not change the logo.', false); return; }
+  logoMsg(variant, remove ? 'Removed.' : 'Shipped logo restored.', true);
+  loadBranding();
+}
+
 async function makeVoucher() {
   const minutes = Number(document.getElementById('voucherMinutes').value || 30);
   const { ok, data } = await post('/vouchers', { minutes: minutes });
@@ -830,6 +937,7 @@ window.addEventListener('hashchange', panelFromHash);
 panelFromHash();
 load();
 loadPortalText().catch(() => {});
+loadBranding().catch(() => {});
 setInterval(load, 10000);
 </script>
 </body>

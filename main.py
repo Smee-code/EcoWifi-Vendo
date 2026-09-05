@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSON
 from starlette.concurrency import run_in_threadpool
 
 import auth
+import branding
 import database
 import network_service
 import session_worker
@@ -20,6 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 TEMPLATES = Path(__file__).parent / "templates"
+ASSETS = Path(__file__).parent / "assets"
 
 
 def _bootstrap_admin():
@@ -61,6 +63,7 @@ def _bootstrap_admin():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+    database.seed_default_logos(str(ASSETS))
     _bootstrap_admin()
     session_worker.start()
     yield
@@ -367,6 +370,36 @@ async def admin_session(request: Request):
     }
 
 
+@app.get("/logo/{variant}")
+async def logo(variant: str, request: Request):
+    """Serves operator branding to the captive portal.
+
+    Cached hard and busted by a version in the query string, because this
+    is the single largest thing the portal downloads and every customer
+    downloads it. Without caching, the gateway re-serves it on every
+    poll; without the version, an operator's new logo would never reach a
+    phone that already cached the old one."""
+    if variant not in database.LOGO_VARIANTS:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    row = database.get_logo(variant)
+    if not row:
+        raise HTTPException(status_code=404, detail="No logo set")
+
+    etag = f'W/"{variant}-{row["updated_at"]}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+
+    return Response(
+        content=row["data"],
+        media_type=row["content_type"],
+        headers={
+            "ETag": etag,
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
 @app.get("/health")
 async def health(_=Depends(require_admin)):
     return {
@@ -432,6 +465,7 @@ async def status(request: Request):
         # Wording belongs to the operator: the same portal fronts a bottle
         # validator, a coin slot or a card reader.
         "portal_text": database.get_portal_text(),
+        "branding": database.logo_summary(),
         "configured": database.has_rates(),
         # So the portal stops asking for payment the machine cannot take.
         "machine": {
@@ -1048,6 +1082,90 @@ async def delete_rate(payload: dict, _=Depends(require_admin)):
 
     logger.warning(f"Rate removed: {payment_method} (quantity {quantity or 'all'})")
     return {"payment_method": payment_method, "quantity": quantity, "deleted": True}
+
+
+@app.get("/admin/branding")
+async def get_branding(_=Depends(require_admin)):
+    return {
+        "logos": database.logo_summary(),
+        "guidance": {
+            "large": "Shown across the top of the portal on tablets and "
+                     "desktops. A wide horizontal lockup works best.",
+            "small": "Shown in the portal header on phones. A square icon "
+                     "works best.",
+        },
+    }
+
+
+@app.post("/admin/logo/{variant}")
+async def upload_logo(variant: str, request: Request, _=Depends(require_admin)):
+    """Accepts a PNG or JPEG and stores a portal-ready version.
+
+    Sent as a raw body rather than multipart, matching the backup restore
+    endpoint, so the app still needs no multipart dependency.
+
+    The upload is resized and its white background made transparent
+    before storage. Operators upload what their designer gave them --
+    typically a multi-megabyte export on a white card -- and neither the
+    size nor the white box is acceptable on a captive portal."""
+    # Drain the upload BEFORE validating the variant. Answering while the
+    # client is still sending megabytes makes the browser report a
+    # connection reset instead of showing the error message.
+    raw = await request.body()
+
+    if variant not in database.LOGO_VARIANTS:
+        raise HTTPException(status_code=404, detail="Unknown logo variant")
+
+    strip = request.query_params.get("strip", "1") != "0"
+
+    try:
+        processed = await run_in_threadpool(
+            branding.process_logo, raw, variant, strip)
+    except branding.LogoError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Logo processing failed: {e}")
+        raise HTTPException(status_code=500, detail="Could not process that image.")
+
+    database.set_logo(variant, processed, is_default=False)
+    database.set_setting(f"logo_{variant}_cleared", "0")
+
+    info = branding.describe(processed)
+    logger.info(f"Logo '{variant}' replaced ({info['width']}x{info['height']}, "
+                f"{info['bytes'] // 1024} KB)")
+    return {
+        "variant": variant,
+        "stored": info,
+        "original_bytes": len(raw),
+        "logos": database.logo_summary(),
+    }
+
+
+@app.post("/admin/logo/{variant}/reset")
+async def reset_logo(variant: str, payload: dict | None = None, _=Depends(require_admin)):
+    """Restores the shipped logo, or removes branding entirely.
+
+    Body: {"remove": true} to clear it and fall back to the text wordmark.
+    The cleared state is remembered, otherwise the next restart would
+    helpfully put the shipped logo straight back."""
+    if variant not in database.LOGO_VARIANTS:
+        raise HTTPException(status_code=404, detail="Unknown logo variant")
+
+    payload = payload or {}
+    if payload.get("remove"):
+        database.delete_logo(variant)
+        database.set_setting(f"logo_{variant}_cleared", "1")
+        logger.info(f"Logo '{variant}' removed")
+        return {"variant": variant, "removed": True, "logos": database.logo_summary()}
+
+    path = ASSETS / f"default-logo-{variant}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No shipped logo to restore")
+
+    database.set_logo(variant, path.read_bytes(), is_default=True)
+    database.set_setting(f"logo_{variant}_cleared", "0")
+    logger.info(f"Logo '{variant}' restored to the shipped default")
+    return {"variant": variant, "restored": True, "logos": database.logo_summary()}
 
 
 @app.get("/admin/portal-text")
