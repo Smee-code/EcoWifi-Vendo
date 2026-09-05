@@ -44,6 +44,10 @@
       <label for="token">Setup token (from the server log)</label>
       <input id="token" autocomplete="off" autofocus>
 
+      <label for="username">Admin username</label>
+      <input id="username" value="admin" autocomplete="username" autocapitalize="none"
+             spellcheck="false">
+
       <label for="password">New admin password (at least 8 characters)</label>
       <input type="password" id="password" autocomplete="new-password">
 
@@ -70,6 +74,7 @@ async function createPassword(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         setup_token: document.getElementById('token').value,
+        username: document.getElementById('username').value,
         password: document.getElementById('password').value,
         confirm: document.getElementById('confirm').value
       })

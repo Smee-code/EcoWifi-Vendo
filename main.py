@@ -26,13 +26,25 @@ def _bootstrap_admin():
     """Makes sure there is a way in, without ever shipping a default
     password (which would be the same on every machine, and public)."""
     if database.has_admin_password():
+        # A database created before usernames existed has a working
+        # password but no username. Give it the default rather than
+        # locking the operator out of their own machine.
+        if not database.get_admin_username():
+            database.store_admin_username(auth.DEFAULT_USERNAME)
+            logger.warning(
+                "This database predates admin usernames. The existing password "
+                "still works; sign in with username %s and change it under "
+                "Settings.", auth.DEFAULT_USERNAME,
+            )
         return
 
     preset = auth.bootstrap_password_from_env()
     if preset:
         salt, digest, iterations = auth.hash_password(preset)
         database.store_admin_password(salt, digest, iterations)
-        logger.warning("Admin password set from ECOWIFI_ADMIN_PASSWORD.")
+        username = auth.bootstrap_username_from_env() or auth.DEFAULT_USERNAME
+        database.store_admin_username(username)
+        logger.warning("Admin credentials set from environment (username: %s).", username)
         return
 
     # No password yet. The setup page needs this token, which only
@@ -70,6 +82,21 @@ def _render(name: str) -> str:
 
 def _client_mac(request: Request):
     return network_service.resolve_mac_from_ip(request.client.host)
+
+
+def _require_rates():
+    """Nothing can be granted before the operator has priced a payment.
+
+    Without a rate there is no answer to "how much time is one payment
+    worth", and guessing one would hand out time at a rate nobody chose.
+    Returns 503 rather than 400: the request is fine, the machine is not
+    ready."""
+    if not database.has_rates():
+        raise HTTPException(
+            status_code=503,
+            detail="This machine is not configured yet. The operator still needs "
+                   "to set what one payment is worth.",
+        )
 
 
 def _reject_if_banned(mac_address):
@@ -137,7 +164,27 @@ async def admin(request: Request):
         return RedirectResponse("/admin/setup", status_code=303)
     if not is_admin(request):
         return RedirectResponse("/admin/login", status_code=303)
+    # A machine with no rates cannot do anything useful, so finish setup
+    # before showing a dashboard full of zeroes.
+    if not database.has_rates():
+        return RedirectResponse("/admin/setup-rates", status_code=303)
     return _render("admin.html")
+
+
+@app.get("/admin/setup-rates", response_class=HTMLResponse)
+async def admin_setup_rates_page(request: Request):
+    """Second half of first-run setup: what is one payment worth.
+
+    Deliberately a separate gate from the password. The operator has to
+    name their own payment trigger, because the gateway ships without one
+    -- there is no 'bottle' or 'coin' baked in to fall back on."""
+    if not database.has_admin_password():
+        return RedirectResponse("/admin/setup", status_code=303)
+    if not is_admin(request):
+        return RedirectResponse("/admin/login", status_code=303)
+    if database.has_rates():
+        return RedirectResponse("/admin", status_code=303)
+    return _render("setup_rates.html")
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
@@ -176,6 +223,13 @@ async def admin_setup(request: Request, payload: dict):
         logger.warning(f"Rejected setup attempt from {ip} (bad token)")
         raise HTTPException(status_code=403, detail="That setup token is not correct.")
 
+    username = (payload.get("username") or "").strip()
+    if not auth.valid_username(username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-32 characters: letters, numbers, dot, dash or underscore.",
+        )
+
     password = payload.get("password") or ""
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Use at least 8 characters.")
@@ -184,6 +238,7 @@ async def admin_setup(request: Request, payload: dict):
 
     salt, digest, iterations = await run_in_threadpool(auth.hash_password, password)
     database.store_admin_password(salt, digest, iterations)
+    database.store_admin_username(username)
     auth.clear_failures(ip)
     auth.clear_setup_token()
     logger.warning(f"Admin password created from {ip}")
@@ -214,15 +269,26 @@ async def admin_login(request: Request, payload: dict):
         raise HTTPException(status_code=429, detail=f"Too many attempts. Try again in {wait}s.")
 
     salt, digest, iterations = database.get_admin_credentials()
+
     # Off the event loop: this is deliberately slow, and blocking here
     # would freeze the customer portal for every login attempt.
-    ok = await run_in_threadpool(
+    #
+    # The password is verified even when the username is already wrong.
+    # Returning early on a bad username would make it answer far faster
+    # than a bad password, which is a free way to discover the real
+    # username by timing alone.
+    password_ok = await run_in_threadpool(
         auth.verify_password, payload.get("password") or "", salt, digest, iterations
     )
-    if not ok:
+    username_ok = auth.verify_username(payload.get("username") or "",
+                                       database.get_admin_username() or "")
+
+    if not (username_ok and password_ok):
         auth.record_failure(ip)
         logger.warning(f"Failed admin login from {ip}")
-        raise HTTPException(status_code=401, detail="Wrong password.")
+        # One message for both cases, so this cannot be used to confirm
+        # whether a username exists.
+        raise HTTPException(status_code=401, detail="Wrong username or password.")
 
     auth.clear_failures(ip)
     logger.info(f"Admin logged in from {ip}")
@@ -251,28 +317,53 @@ async def change_password(request: Request, payload: dict, _=Depends(require_adm
     if not ok:
         raise HTTPException(status_code=403, detail="Current password is not correct.")
 
+    new_username = (payload.get("new_username") or "").strip()
     new_password = payload.get("new_password") or ""
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Use at least 8 characters.")
-    if new_password != payload.get("confirm"):
-        raise HTTPException(status_code=400, detail="The two passwords do not match.")
 
-    new_salt, new_digest, new_iterations = await run_in_threadpool(
-        auth.hash_password, new_password
-    )
-    database.store_admin_password(new_salt, new_digest, new_iterations)
-    logger.warning(f"Admin password changed from {request.client.host}")
+    if not new_username and not new_password:
+        raise HTTPException(status_code=400, detail="Enter a new username or a new password.")
+
+    if new_username and not auth.valid_username(new_username):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-32 characters: letters, numbers, dot, dash or underscore.",
+        )
+
+    if new_password:
+        if len(new_password) < 8:
+            raise HTTPException(status_code=400, detail="Use at least 8 characters.")
+        if new_password != payload.get("confirm"):
+            raise HTTPException(status_code=400, detail="The two passwords do not match.")
+        new_salt, new_digest, new_iterations = await run_in_threadpool(
+            auth.hash_password, new_password
+        )
+        # Storing a password also drops every existing login, this one included.
+        database.store_admin_password(new_salt, new_digest, new_iterations)
+    else:
+        # A username-only change must still sign other browsers out, so
+        # re-store the same hash to clear the session table.
+        database.store_admin_password(salt, digest, iterations)
+
+    if new_username:
+        database.store_admin_username(new_username)
+
+    logger.warning(f"Admin credentials changed from {request.client.host}")
 
     # store_admin_password dropped every session including this one.
-    return _login_response(request, {"changed": True})
+    return _login_response(request, {
+        "changed": True,
+        "username": database.get_admin_username(),
+    })
 
 
 @app.get("/admin/session")
 async def admin_session(request: Request):
     """Lets the dashboard tell 'logged out' from 'server down'."""
+    authenticated = is_admin(request)
     return {
-        "authenticated": is_admin(request),
+        "authenticated": authenticated,
         "needs_setup": not database.has_admin_password(),
+        "username": database.get_admin_username() if authenticated else None,
     }
 
 
@@ -289,10 +380,13 @@ async def health(_=Depends(require_admin)):
 
 @app.post("/claim")
 async def claim(request: Request):
-    """Called from the captive portal when the customer taps
-    'Insert Plastic Bottle'. Identifies their MAC from their IP (via the
-    ARP/neighbor table) and marks them pending, so the next validated
-    bottle credits this device."""
+    """Called from the captive portal when the customer starts a payment.
+
+    Identifies their MAC from their IP (via the ARP/neighbor table) and
+    queues them, so the next payment the external validator confirms
+    credits this device."""
+    _require_rates()
+
     client_ip = request.client.host
     mac_address = network_service.resolve_mac_from_ip(client_ip)
 
@@ -310,11 +404,11 @@ async def claim(request: Request):
 
 @app.post("/claim/cancel")
 async def cancel_claim(request: Request):
-    """Withdraws this device from the bottle queue.
+    """Withdraws this device from the payment queue.
 
     Only ever called deliberately (the customer taps Cancel). The portal
     does NOT cancel on a timer: if a claim were dropped while someone was
-    already feeding a bottle in, the machine would swallow it and credit
+    already paying, the machine would take the payment and credit
     nobody."""
     mac_address = _client_mac(request)
     if not mac_address:
@@ -335,13 +429,17 @@ async def status(request: Request):
         "mac_address": mac_address,
         "session": database.get_session(mac_address) if mac_address else None,
         "session_cap_seconds": database.get_session_cap_seconds(),
-        # So the portal can stop telling people to insert a bottle when
-        # the machine cannot take one.
+        # Wording belongs to the operator: the same portal fronts a bottle
+        # validator, a coin slot or a card reader.
+        "portal_text": database.get_portal_text(),
+        "configured": database.has_rates(),
+        # So the portal stops asking for payment the machine cannot take.
         "machine": {
-            "accepting_bottles": device["online"] and not device["bin_full"],
-            "bin_full": device["bin_full"],
-            "detector_online": device["online"],
+            "accepting": device["accepting"],
+            "device_online": device["online"],
             "ever_seen": device["last_seen"] is not None,
+            # Whatever the device chose to say for itself, if anything.
+            "message": device["message"],
         },
     }
 
@@ -394,35 +492,75 @@ async def resume(request: Request, payload: dict | None = None):
     return resumed
 
 
-# ---- bottle grant (the one ESP32 coupling point) ----
+# ---- grant (the one coupling point to the payment device) ----
 
-def _grant_oldest_pending():
-    """Shared by the real ESP32 endpoint and the dev simulator."""
+def _resolve_payment_method(requested):
+    """Picks the rate to charge against.
+
+    A named method must exist. An unnamed one is only unambiguous when a
+    single rate is configured -- otherwise the device has to say which
+    trigger fired, because the gateway cannot guess what the customer
+    actually paid with."""
+    rates = database.get_all_rates()
+
+    if requested:
+        requested = str(requested).strip()
+        if not any(r["payment_method"] == requested for r in rates):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown payment method {requested!r}. Configured: " +
+                       ", ".join(r["payment_method"] for r in rates),
+            )
+        return requested
+
+    if len(rates) == 1:
+        return rates[0]["payment_method"]
+
+    raise HTTPException(
+        status_code=400,
+        detail="Several payment methods are configured, so the request must name "
+               "one: " + ", ".join(r["payment_method"] for r in rates),
+    )
+
+def _grant_oldest_pending(payment_method=None):
+    """Shared by the real validator endpoint and the dev simulator.
+
+    `payment_method` names which configured rate to apply, so one gateway
+    can front several triggers (a coin slot and a bottle chute, say). When
+    the caller does not say, the single configured rate is used, which
+    keeps simple one-trigger machines simple."""
+    _require_rates()
+
+    payment_method = _resolve_payment_method(payment_method)
+
     pending = database.get_oldest_pending()
     if not pending:
         raise HTTPException(status_code=400, detail="No pending claim to grant")
 
     mac_address = pending["mac_address"]
 
-    # A device banned after it queued must not be paid out. Drop the
-    # claim so the bottle is not silently swallowed by a dead entry.
+    # A device banned after it queued must not be paid out. Drop the claim
+    # so the payment is not silently swallowed by a dead entry.
     if database.is_mac_banned(mac_address):
         database.mark_claim_granted(pending["id"])
         logger.warning(f"Discarded claim from banned device {mac_address}")
         raise HTTPException(status_code=403, detail="That device has been blocked by the operator.")
 
-    minutes_per_unit = database.get_rate("bottle")
+    minutes_per_unit = database.get_rate(payment_method)
     if minutes_per_unit is None:
-        raise HTTPException(status_code=500, detail="No rate configured for 'bottle'")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No rate is configured for payment method {payment_method!r}.",
+        )
 
-    # Close the claim BEFORE crediting. If two bottles land at once, only
+    # Close the claim BEFORE crediting. If two payments land at once, only
     # one call wins this guard, so a single claim can never be paid twice.
     if not database.mark_claim_granted(pending["id"]):
         raise HTTPException(status_code=409, detail="That claim was just granted")
 
-    added = database.credit_time(mac_address, minutes_per_unit, bottles=1)
+    added = database.credit_time(mac_address, minutes_per_unit, payments=1)
     credited_minutes = added // 60
-    database.log_transaction(mac_address, "bottle", 1, credited_minutes)
+    database.log_transaction(mac_address, payment_method, 1, credited_minutes)
     router_updated = network_service.allow_mac(mac_address)
 
     session = database.get_session(mac_address)
@@ -430,7 +568,7 @@ def _grant_oldest_pending():
         **session,
         "router_updated": router_updated,
         "minutes_credited": credited_minutes,
-        # True when the session cap swallowed some or all of the bottle,
+        # True when the session cap swallowed some or all of the payment,
         # so the portal can explain the shortfall instead of appearing
         # to lose time.
         "capped": added < minutes_per_unit * 60,
@@ -438,27 +576,32 @@ def _grant_oldest_pending():
 
 
 @app.post("/grant")
-async def grant():
-    """Called by the ESP32 once a bottle passes all validation checks.
-    Grants whichever device is currently the oldest pending claim.
+async def grant(payload: dict | None = None):
+    """Called by the external payment device once it has validated a
+    payment -- a bottle validator, coin acceptor, card reader or anything
+    else. Grants whichever device is currently the oldest pending claim.
 
-    NOTE: this assumes at most one bottle chute and therefore normally
-    one pending claim at a time. The spec document (section 7, step 7)
-    says the ESP32 posts the pending device identity -- resolving how
-    the ESP32 learns that identity is still open, and this endpoint will
-    need to accept and use it."""
-    return _grant_oldest_pending()
+    Optional body: {"payment_method": "coin"} to name which configured
+    rate applies. Required only when more than one rate exists.
+
+    NOTE: this assumes normally one pending claim at a time. If the
+    validator can identify WHICH waiting customer paid, this endpoint
+    should be extended to accept and use that identifier rather than
+    always taking the oldest claim."""
+    payload = payload or {}
+    return _grant_oldest_pending(payload.get("payment_method"))
 
 
-@app.post("/dev/insert-bottle")
-async def dev_insert_bottle():
-    """DEV ONLY -- stands in for the ESP32 so the claim to grant flow is
-    clickable in a browser. Returns 404 outside dev mode so it cannot be
-    reached on the real Orange Pi."""
+@app.post("/dev/simulate-payment")
+async def dev_simulate_payment(payload: dict | None = None):
+    """DEV ONLY -- stands in for the payment device so the claim-to-grant
+    flow can be exercised without hardware. Returns 404 outside dev mode
+    so it cannot be reached on a deployed machine."""
     if not network_service.DEV_MODE:
         raise HTTPException(status_code=404, detail="Not found")
-    logger.info("[DEV] Simulating a validated bottle insertion")
-    return _grant_oldest_pending()
+    payload = payload or {}
+    logger.info("[DEV] Simulating a validated payment")
+    return _grant_oldest_pending(payload.get("payment_method"))
 
 
 # ---- vouchers ----
@@ -486,6 +629,18 @@ async def redeem_voucher(request: Request, payload: dict):
     if not code:
         raise HTTPException(status_code=400, detail="A voucher code is required")
 
+    # Throttled like the admin login. Codes are short, and without this a
+    # customer on the open SSID can sit and enumerate them for free time.
+    # Namespaced so voucher guesses cannot lock the operator out of the
+    # dashboard, and vice versa.
+    throttle_key = f"voucher:{request.client.host}"
+    wait = auth.lockout_remaining(throttle_key)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many incorrect codes. Try again in {wait} seconds.",
+        )
+
     mac_address = _target_mac(request, payload)
     if not mac_address:
         raise HTTPException(status_code=400, detail="Could not identify your device.")
@@ -494,7 +649,11 @@ async def redeem_voucher(request: Request, payload: dict):
 
     minutes = database.redeem_voucher(code)
     if minutes is None:
+        auth.record_failure(throttle_key)
+        logger.warning(f"Rejected voucher code from {request.client.host}")
         raise HTTPException(status_code=400, detail="Invalid or already-used voucher")
+
+    auth.clear_failures(throttle_key)
 
     added = database.credit_time(mac_address, minutes)
     credited_minutes = added // 60
@@ -519,8 +678,8 @@ async def admin_stats(_=Depends(require_admin)):
 
 @app.get("/admin/system-status")
 async def system_status(_=Depends(require_admin)):
-    """Everything the operator needs to tell 'the machine is fine' from
-    'the machine is quietly not taking bottles'."""
+    """Everything the operator needs to tell "the machine is fine" from
+    "the machine is quietly not taking payments"."""
     device = database.get_device_status()
 
     # Does the firewall actually match what the database believes? These
@@ -534,12 +693,8 @@ async def system_status(_=Depends(require_admin)):
     fw_granted = {m.upper() for m in network_service.granted_macs()}
 
     return {
-        "detection_side": {
-            **device,
-            # Bin full does not stop the gateway -- the ESP32 stops
-            # accepting bottles. Surfaced here so someone knows to empty it.
-            "accepting_bottles": device["online"] and not device["bin_full"],
-        },
+        "payment_device": device,
+        "configured": database.has_rates(),
         "gateway": system_monitor.summary(database.DB_PATH),
         "firewall": {
             "dev_mode": network_service.DEV_MODE,
@@ -554,23 +709,37 @@ async def system_status(_=Depends(require_admin)):
 
 @app.post("/device/heartbeat")
 async def device_heartbeat(request: Request, payload: dict | None = None):
-    """Called periodically by the ESP32 so the dashboard can show whether
-    the detection side is alive and whether the bin needs emptying.
+    """Called periodically by the payment device so the dashboard can show
+    whether it is alive and whether it can still take payment.
 
-    This is a SECOND ESP32 coupling point beyond POST /grant, which the
-    spec's section 8 asks to keep to one. There is no alternative: the
-    bin sensor is wired to the ESP32, so the Orange Pi cannot observe it
-    directly. The boundary is still one-way -- the ESP32 calls us, we
-    never call it -- so the detection side stays independently testable.
+    This is a SECOND coupling point beyond POST /grant. There is no
+    alternative: the sensors are wired to the device, so the gateway
+    cannot observe them directly. The boundary stays one-way -- the device
+    calls us, we never call it -- so it remains independently testable.
 
-    Every field is optional; firmware that only says 'I am alive' works."""
+    Body is entirely optional and entirely freeform. Two keys are given
+    meaning by the gateway:
+        accepting  (bool) -- device cannot currently take payment
+        message    (str)  -- what to tell customers while that is true
+    Everything else is stored and shown on the dashboard as-is, so any
+    hardware can report whatever it has: bin_full, hopper_coins,
+    terminal_id, temperature, and so on.
+
+    Keys are merged with what was reported before, so a device that sends
+    its firmware once and then only sends a level reading loses nothing."""
     payload = payload or {}
+    metadata = payload.get("metadata")
+
+    if not isinstance(metadata, dict):
+        # Allow a flat body too: everything that is not a reserved key
+        # becomes metadata. Simpler for firmware with a small JSON writer.
+        metadata = {k: v for k, v in payload.items()
+                    if k not in ("firmware", "metadata")}
+
     status = database.record_heartbeat(
-        bin_full=payload.get("bin_full"),
-        bin_distance_cm=payload.get("bin_distance_cm"),
-        bottles_today=payload.get("bottles_today"),
         firmware=payload.get("firmware"),
         source_ip=request.client.host,
+        metadata=metadata,
     )
     return status
 
@@ -788,6 +957,56 @@ async def update_rate(payload: dict, _=Depends(require_admin)):
 
     database.set_rate(payment_method, minutes_per_unit)
     return {"payment_method": payment_method, "minutes_per_unit": minutes_per_unit}
+
+
+@app.post("/rates/delete")
+async def delete_rate(payload: dict, _=Depends(require_admin)):
+    """Removes a payment method. The last one cannot be removed, because a
+    machine with no rates cannot grant anything."""
+    payment_method = (payload.get("payment_method") or "").strip()
+    if not payment_method:
+        raise HTTPException(status_code=400, detail="payment_method is required")
+
+    rates = database.get_all_rates()
+    if len(rates) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="This is the only payment method. Add another before removing it, "
+                   "or the machine cannot grant any time.",
+        )
+
+    if not database.delete_rate(payment_method):
+        raise HTTPException(status_code=404, detail="No such payment method")
+
+    logger.warning(f"Rate removed: {payment_method}")
+    return {"payment_method": payment_method, "deleted": True}
+
+
+@app.get("/admin/portal-text")
+async def get_portal_text(_=Depends(require_admin)):
+    """Current customer-facing wording, plus the defaults so the dashboard
+    can show what each field falls back to."""
+    return {
+        "text": database.get_portal_text(),
+        "defaults": database.DEFAULT_PORTAL_TEXT,
+    }
+
+
+@app.post("/admin/portal-text")
+async def set_portal_text(payload: dict, _=Depends(require_admin)):
+    """Updates the wording shown to customers. Send only the keys you want
+    to change; an empty value resets that key to its default."""
+    values = payload.get("text") if isinstance(payload.get("text"), dict) else payload
+    unknown = [k for k in values if k not in database.DEFAULT_PORTAL_TEXT]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown portal text keys: " + ", ".join(sorted(unknown)),
+        )
+
+    text = database.set_portal_text(values)
+    logger.info("Portal wording updated")
+    return {"text": text, "defaults": database.DEFAULT_PORTAL_TEXT}
 
 
 @app.get("/admin/session-cap")

@@ -44,7 +44,7 @@
   @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
   @keyframes popIn    { from{opacity:0;transform:translateY(14px) scale(.96)} to{opacity:1;transform:none} }
   @keyframes sheetIn  { from{opacity:0;transform:translate(-50%,16px)} to{opacity:1;transform:translate(-50%,0)} }
-  @keyframes dropBottle { 0%{transform:translateY(-14px);opacity:.35} 55%{transform:translateY(4px);opacity:1} 100%{transform:translateY(-14px);opacity:.35} }
+  @keyframes dropToken { 0%{transform:translateY(-14px);opacity:.35} 55%{transform:translateY(4px);opacity:1} 100%{transform:translateY(-14px);opacity:.35} }
   @keyframes glowRing { 0%,100%{box-shadow:0 0 0 0 rgba(201,242,77,.35)} 50%{box-shadow:0 0 0 18px rgba(201,242,77,0)} }
 
   @media (prefers-reduced-motion: reduce) {
@@ -233,7 +233,7 @@
   .waiting { display: flex; align-items: center; justify-content: center; gap: 9px;
              padding: 11px 14px; border-radius: 14px; background: #f6f9f5;
              font: 500 12px var(--body); color: #4a5a52; }
-  .waiting .bottle { animation: dropBottle 1.6s ease-in-out infinite; width: 14px; height: 22px; }
+  .waiting .bottle { animation: dropToken 1.6s ease-in-out infinite; width: 14px; height: 22px; }
   .modal .cancel { margin-top: 14px; width: 100%; cursor: pointer;
                    border: 1px solid rgba(18,38,31,.14); background: #fff; border-radius: 14px;
                    padding: 15px; font: 600 14px var(--body); color: #4a5a52;
@@ -264,7 +264,7 @@
   <div class="mhead">
     <div class="logo">
       <div class="mark">E</div>
-      <div class="wordmark"><b>EcoWifi Vendo</b><span>Recycle a bottle. Get online.</span></div>
+      <div class="wordmark"><b>EcoWifi Vendo</b><span class="tagline">Pay on the machine. Get online.</span></div>
     </div>
     <button class="iconbtn" onclick="go('info')" aria-label="Connection details">i</button>
   </div>
@@ -274,13 +274,13 @@
     <aside class="side">
       <div class="brand">
         <div class="mark" style="width:34px;height:34px;border-radius:11px;font-size:17px">E</div>
-        <div class="wordmark"><b>EcoWifi Vendo</b><span>Recycle a bottle. Get online.</span></div>
+        <div class="wordmark"><b>EcoWifi Vendo</b><span class="tagline">Pay on the machine. Get online.</span></div>
       </div>
       <button class="navbtn on" data-nav="home" onclick="go('home')">
-        <span class="chip"></span><span class="lbl"><b>Session</b><span>Time and bottles</span></span>
+        <span class="chip"></span><span class="lbl"><b>Session</b><span>Time and payments</span></span>
       </button>
       <button class="navbtn" data-nav="rates" onclick="go('rates')">
-        <span class="chip"></span><span class="lbl"><b>WiFi rates</b><span>Time per bottle</span></span>
+        <span class="chip"></span><span class="lbl"><b>WiFi rates</b><span>Time per payment</span></span>
       </button>
       <button class="navbtn" data-nav="voucher" onclick="go('voucher')">
         <span class="chip"></span><span class="lbl"><b>Voucher</b><span>Redeem a code</span></span>
@@ -288,8 +288,8 @@
       <button class="navbtn" data-nav="info" onclick="go('info')">
         <span class="chip"></span><span class="lbl"><b>Connection</b><span>IP, MAC, limits</span></span>
       </button>
-      <div class="hintbox" style="margin-top:14px;padding:12px 13px;border-radius:14px;font-size:10.5px">
-        Only empty plastic bottles are accepted. Metal cans are returned automatically.
+      <div class="hintbox notice-text" style="margin-top:14px;padding:12px 13px;border-radius:14px;font-size:10.5px">
+        Follow the instructions on the machine to add time.
       </div>
     </aside>
 
@@ -307,7 +307,7 @@
           <span class="num dim" id="ss">00</span><span class="unit last">SEC</span>
         </div>
         <div class="bar"><i id="bar" style="width:0%"></i></div>
-        <div class="meta"><span id="bottlesLine">0 bottles inserted</span><span id="capLine"></span></div>
+        <div class="meta"><span id="bottlesLine">0 payments made</span><span id="capLine"></span></div>
       </section>
 
       <div class="actions">
@@ -317,7 +317,7 @@
         </button>
         <button class="insert" id="insertBtn" onclick="openInsert()">
           <span class="badge"><span class="bottle"></span></span>
-          <span class="txt"><b id="insertTitle">Insert plastic bottle</b><span id="insertSub">Adds time to your session</span></span>
+          <span class="txt"><b id="insertTitle">Insert payment</b><span id="insertSub">Adds time to your session</span></span>
         </button>
       </div>
 
@@ -327,7 +327,7 @@
       <div class="tiles">
         <button class="tile" onclick="go('rates')">
           <span class="ic"><span class="bottle" style="width:11px;height:17px;border-top-width:3px"></span></span>
-          <b>WiFi rates</b><span>How much time each bottle earns</span>
+          <b>WiFi rates</b><span>How much time each payment earns</span>
         </button>
         <button class="tile" onclick="go('voucher')">
           <span class="ic" style="background:#f2f4f1">#</span>
@@ -335,7 +335,7 @@
         </button>
       </div>
 
-      <p class="footnote">Only empty plastic bottles are accepted. Metal cans and other objects are returned automatically.</p>
+      <p class="footnote notice-text">Follow the instructions on the machine to add time.</p>
 
     </main>
 
@@ -354,11 +354,11 @@
     <div class="card">
       <div class="head">
         <h2>WiFi rates</h2>
-        <p id="ratesLead">Every bottle adds time to your session.</p>
+        <p id="ratesLead">Each payment adds time to your session.</p>
       </div>
       <div id="ratesRows"></div>
     </div>
-    <div class="hintbox" id="ratesHint">Bottles must be empty, uncapped and no larger than 1.5 L.</div>
+    <div class="hintbox" id="ratesHint"></div>
   </div>
 
   <div id="panel-voucher" style="display:none">
@@ -382,9 +382,9 @@
 
 <div class="modal-wrap" id="modal" style="display:none">
   <div class="modal">
-    <span class="pillbadge">Bay open</span>
-    <h2>Insert your bottle</h2>
-    <p class="lead">Drop one empty plastic bottle into the slot. We will credit your device as soon as the sensor validates it.</p>
+    <span class="pillbadge">Ready</span>
+    <h2 id="modalTitle">Waiting for payment</h2>
+    <p class="lead" id="modalBody">Complete the payment on the machine.</p>
 
     <div class="ring">
       <svg viewBox="0 0 120 120">
@@ -396,7 +396,7 @@
       <div class="inner"><b id="modalSecs">30</b><span id="modalUnit">seconds</span></div>
     </div>
 
-    <div class="waiting"><span class="bottle"></span><span id="waitingMsg">Waiting for the sensor to detect a bottle</span></div>
+    <div class="waiting"><span class="bottle"></span><span id="waitingMsg">Waiting for the machine to confirm</span></div>
     <button class="cancel" onclick="cancelInsert()">Cancel</button>
   </div>
 </div>
@@ -407,9 +407,12 @@ const RING = 2 * Math.PI * 54;
 let remaining = 0;         // seconds, ticked locally between syncs
 let status = 'blocked';
 let pendingClaim = false;
-let bottles = 0;
+let payments = 0;
 let capSeconds = 0;
-let bottleMinutes = 30;
+let unitMinutes = 30;
+let unitLabel = 'payment';
+let configured = true;
+let text = {};
 let screen = 'home';
 let modalOpen = false;
 let modalSecs = 30;
@@ -470,13 +473,13 @@ function paint() {
     label.innerText = 'Time paused';
   } else {
     dot.style.background = remaining > 0 ? '#f0c14b' : '#ff8f6b';
-    label.innerText = bottles > 0 ? 'Time used up' : 'Not connected';
+    label.innerText = payments > 0 ? 'Time used up' : 'Not connected';
   }
 
   const pct = capSeconds ? Math.min(100, (remaining / capSeconds) * 100) : (remaining > 0 ? 100 : 0);
   document.getElementById('bar').style.width = pct.toFixed(1) + '%';
   document.getElementById('bottlesLine').innerText =
-    bottles + (bottles === 1 ? ' bottle inserted' : ' bottles inserted');
+    payments + (payments === 1 ? ' payment made' : ' payments made');
   document.getElementById('capLine').innerText = capSeconds ? 'of ' + fmtHours(capSeconds) + ' max' : '';
 
   const tBtn = document.getElementById('toggleBtn');
@@ -492,12 +495,17 @@ function paint() {
   // this is the only route back to cancelling, and reopening is safe
   // because /claim is idempotent per device.
   const iBtn = document.getElementById('insertBtn');
-  iBtn.disabled = false;
-  document.getElementById('insertTitle').innerText =
-    pendingClaim ? 'Waiting for your bottle' : 'Insert plastic bottle';
-  document.getElementById('insertSub').innerText = pendingClaim
-    ? 'Tap to reopen the bay or cancel'
-    : 'Adds ' + bottleMinutes + ' minutes to your session';
+  // Nothing can be granted until the operator has priced a payment, so
+  // do not invite the customer to start something that will be refused.
+  iBtn.disabled = !configured;
+  document.getElementById('insertTitle').innerText = !configured
+    ? 'Not available yet'
+    : (pendingClaim ? 'Waiting for confirmation' : (text.action_label || 'Insert payment'));
+  document.getElementById('insertSub').innerText = !configured
+    ? 'This machine has not been set up yet'
+    : (pendingClaim
+        ? 'Tap to reopen or cancel'
+        : (text.action_hint || 'Adds ' + unitMinutes + ' minutes to your session'));
 }
 
 function strip(id, msg, kind) {
@@ -511,30 +519,32 @@ function strip(id, msg, kind) {
 function say(msg, kind) { strip('statusStrip', msg, kind); }
 
 function renderRates() {
-  // Tiers are derived from the live bottle rate and the real session cap,
-  // so this panel cannot drift from what the machine actually gives you.
+  // Tiers are derived from the live rate and the real session cap, so
+  // this panel cannot drift from what the machine actually gives you.
   const rows = [];
   const mk = (n) => {
-    const mins = n * bottleMinutes;
-    const label = n + (n === 1 ? ' bottle' : ' bottles');
-    const time = mins >= 60
-      ? (Number.isInteger(mins / 60) ? (mins / 60) + ' hr' : (mins / 60).toFixed(1) + ' hr')
-      : mins + ' min';
+    const mins = n * unitMinutes;
+    const label = n + ' ' + unitLabel + (n === 1 ? '' : 's');
+    // Only say hours when it IS whole hours. "1.3 hr" reads worse than
+    // "80 min" and makes people do arithmetic to check they were charged
+    // correctly.
+    const time = (mins >= 60 && mins % 60 === 0) ? (mins / 60) + ' hr' : mins + ' min';
     return { label, time, note: '' };
   };
-  rows.push({ ...mk(1), note: '500 ml – 1.5 L, empty' });
+  rows.push(mk(1));
   rows.push(mk(2));
   rows.push(mk(4));
-  if (capSeconds && bottleMinutes) {
-    const capBottles = Math.floor(capSeconds / 60 / bottleMinutes);
-    if (capBottles > 4) rows.push({ ...mk(capBottles), note: 'Session maximum' });
+  if (capSeconds && unitMinutes) {
+    const capUnits = Math.floor(capSeconds / 60 / unitMinutes);
+    if (capUnits > 4) rows.push({ ...mk(capUnits), note: 'Session maximum' });
   }
 
   document.getElementById('ratesLead').innerText =
-    'Every bottle adds ' + bottleMinutes + ' minutes to your session.';
+    'Each ' + unitLabel + ' adds ' + unitMinutes + ' minutes to your session.';
+  const notice = text.notice || '';
   document.getElementById('ratesHint').innerText = capSeconds
-    ? 'Bottles must be empty, uncapped and no larger than 1.5 L. Sessions cap at ' + fmtHours(capSeconds) + '.'
-    : 'Bottles must be empty, uncapped and no larger than 1.5 L.';
+    ? (notice + ' Sessions cap at ' + fmtHours(capSeconds) + '.').trim()
+    : notice;
 
   document.getElementById('ratesRows').innerHTML = rows.map(r =>
     '<div class="rowitem"><span class="k"><b>' + esc(r.label) + '</b>' +
@@ -549,7 +559,7 @@ function renderConn() {
   const rows = [
     ['IP address', lastConn.ip || '--'],
     ['MAC address', lastConn.mac || '--'],
-    ['Bottles inserted', String(bottles)],
+    ['Payments made', String(payments)],
     ['Session cap', capSeconds ? fmtHours(capSeconds) : 'no limit'],
   ];
   document.getElementById('connRows').innerHTML = rows.map(([k, v]) =>
@@ -575,6 +585,8 @@ async function sync() {
 
     lastConn = { ip: data.ip, mac: data.mac_address };
     capSeconds = data.session_cap_seconds || 0;
+    configured = data.configured !== false;
+    if (data.portal_text) applyText(data.portal_text);
 
     const wasPending = pendingClaim;
 
@@ -582,16 +594,16 @@ async function sync() {
       remaining = data.session.remaining_seconds;
       status = data.session.status;
       pendingClaim = !!data.session.pending_claim;
-      bottles = data.session.bottles_inserted || 0;
+      payments = data.session.payments_made || 0;
     } else {
-      remaining = 0; status = 'blocked'; pendingClaim = false; bottles = 0;
+      remaining = 0; status = 'blocked'; pendingClaim = false; payments = 0;
     }
 
-    // The claim closed while the modal was up: the ESP32 validated a
-    // bottle and credited us.
+    // The claim closed while the modal was up: the payment device
+    // confirmed a payment and we credited it.
     if (modalOpen && wasPending && !pendingClaim) {
       closeModal();
-      say('Bottle validated. Time added to your session.', '');
+      say('Payment confirmed. Time added to your session.', '');
     }
 
     paintMachine(data.machine);
@@ -600,20 +612,48 @@ async function sync() {
   } catch (e) { /* keep the last known state on screen */ }
 }
 
+function applyText(t) {
+  text = t || {};
+  document.querySelectorAll('.tagline').forEach(el => {
+    if (text.tagline) el.innerText = text.tagline;
+  });
+  document.querySelectorAll('.notice-text').forEach(el => {
+    if (text.notice) el.innerText = text.notice;
+  });
+  if (text.modal_title) document.getElementById('modalTitle').innerText = text.modal_title;
+  if (text.modal_body) document.getElementById('modalBody').innerText = text.modal_body;
+  if (text.waiting_text) document.getElementById('waitingMsg').innerText = text.waiting_text;
+}
+
 async function loadRates() {
   try {
     const rates = await (await fetch('/rates')).json();
-    const bottle = rates.find(r => r.payment_method === 'bottle');
-    if (bottle) bottleMinutes = bottle.minutes_per_unit;
-  } catch (e) { /* keep the default */ }
+    if (rates.length) {
+      // The portal shows one headline rate. With several triggers
+      // configured, the cheapest is the honest one to advertise.
+      const cheapest = rates.reduce((a, b) =>
+        a.minutes_per_unit <= b.minutes_per_unit ? a : b);
+      unitMinutes = cheapest.minutes_per_unit;
+      unitLabel = cheapest.payment_method;
+    }
+  } catch (e) { /* keep the defaults */ }
 }
 
 function paintMachine(machine) {
+  if (!configured) {
+    strip('machineStrip',
+      'This machine has not been set up yet. Please ask the operator.', 'warn');
+    return;
+  }
+  // A device that has never reported in is most likely one that is not
+  // wired up yet -- do not alarm customers about that.
   if (!machine || !machine.ever_seen) { strip('machineStrip', null); return; }
-  if (machine.bin_full) {
-    strip('machineStrip', 'The bottle bin is full. Please come back once it has been emptied.', 'warn');
-  } else if (!machine.detector_online) {
-    strip('machineStrip', 'The bottle detector is offline right now. Vouchers still work.', 'warn');
+
+  if (!machine.accepting) {
+    // Prefer whatever the hardware said about itself; it knows why.
+    strip('machineStrip', machine.message || (machine.device_online
+      ? 'The machine cannot take payment right now. Vouchers still work.'
+      : 'The payment machine is offline right now. Vouchers still work.'), 'warn');
   } else {
     strip('machineStrip', null);
   }
@@ -635,7 +675,8 @@ async function openInsert() {
   modalOpen = true;
   modalSecs = 30;
   document.getElementById('modalUnit').innerText = 'seconds';
-  document.getElementById('waitingMsg').innerText = 'Waiting for the sensor to detect a bottle';
+  document.getElementById('waitingMsg').innerText =
+    text.waiting_text || 'Waiting for the machine to confirm';
   document.getElementById('modal').style.display = 'flex';
   paintModal();
   paint();
@@ -655,7 +696,7 @@ function closeModal() {
 async function cancelInsert() {
   closeModal();
   await post('/claim/cancel');
-  say('Insertion cancelled. No bottle was taken.', 'err');
+  say('Cancelled. No payment was taken.', 'err');
   sync();
 }
 
@@ -703,12 +744,12 @@ setInterval(() => {
 
     if (modalSecs === 0) {
       // The bay window is up, so get out of the customer's way. The CLAIM
-      // is deliberately left open: cancelling it here would mean a bottle
-      // dropped a second later gets swallowed and credited to nobody.
+      // is deliberately left open: cancelling it here would mean a
+      // payment made a second later gets taken and credited to nobody.
       // They stay queued, and the session view keeps showing that.
       closeModal();
-      say('Still waiting for your bottle. Your place in the queue is held ' +
-          'until it is validated, or you cancel.', 'warn');
+      say('Still waiting for your payment. Your place in the queue is held ' +
+          'until it is confirmed, or you cancel.', 'warn');
     }
   }
 }, 1000);

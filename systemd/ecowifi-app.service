@@ -1,11 +1,13 @@
 [Unit]
 Description=EcoWifi Vendo FastAPI app
-After=network.target ecowifi-nftables.service
+After=network.target ecowifi-nftables.service nginx.service
 Requires=ecowifi-nftables.service
 
 [Service]
 WorkingDirectory=<APP_DIR>
-ExecStart=<APP_DIR>/venv/bin/uvicorn main:app --host 0.0.0.0 --port <PORTAL_PORT>
+# Loopback only: nginx is the only thing that should reach the app
+# directly, so the plain-HTTP port cannot be hit from the WiFi.
+ExecStart=<APP_DIR>/venv/bin/uvicorn main:app --host 127.0.0.1 --port <PORTAL_PORT> --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 RestartSec=5
 

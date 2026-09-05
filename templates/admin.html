@@ -122,6 +122,7 @@
     <a data-panel="macs" data-title="MAC control"><span class="ic">&#8856;</span> MAC control</a>
     <a data-panel="vouchers" data-title="Vouchers"><span class="ic">&#9635;</span> Vouchers</a>
     <a data-panel="rates" data-title="Rates"><span class="ic">&#8986;</span> Rates</a>
+    <a data-panel="portaltext" data-title="Portal text"><span class="ic">&#9998;</span> Portal text</a>
     <a data-panel="transactions" data-title="Transactions"><span class="ic">&#8801;</span> Transactions</a>
     <a data-panel="backup" data-title="Backup"><span class="ic">&#8681;</span> Backup</a>
     <a data-panel="settings" data-title="Settings"><span class="ic">&#9881;</span> Settings</a>
@@ -166,7 +167,7 @@
           <button class="act danger" onclick="banMac()">Block device</button>
         </div>
         <p class="note pad" style="padding-top:0">
-          A blocked device cannot claim, be granted a bottle, redeem a voucher
+          A blocked device cannot claim, be granted a payment, redeem a voucher
           or resume banked time. This is different from Revoke, which only
           ends the current session.
         </p>
@@ -195,14 +196,48 @@
 
     <div class="panel" data-panel="rates">
       <section>
-        <h3>Current rates</h3>
+        <h3>Payment methods and rates</h3>
         <div class="scroll" id="ratesWrap"></div>
         <div class="pad row">
-          <label>Method</label>
-          <input id="rateMethod" placeholder="bottle" size="10">
-          <label>Minutes per unit</label>
+          <label>Trigger name</label>
+          <input id="rateMethod" placeholder="coin" size="12" autocapitalize="none"
+                 spellcheck="false">
+          <label>Minutes earned</label>
           <input id="rateMinutes" type="number" min="1" placeholder="30" size="6">
           <button class="act go" onclick="saveRate()">Save rate</button>
+        </div>
+        <p class="note pad" style="padding-top:0">
+          The trigger name is what your hardware sends as
+          <code>payment_method</code> to <code>POST /grant</code>. With exactly
+          one method configured the device may omit it; with several it must
+          say which one fired.
+        </p>
+      </section>
+      <section>
+        <h3>Session cap</h3>
+        <div class="pad row">
+          <label>Maximum time one device may hold (hours, 0 = no limit)</label>
+          <input id="capHours" type="number" min="0" step="0.5" size="6">
+          <button class="act go" onclick="saveCap()">Save cap</button>
+          <span id="capMsg" style="font-size:.8rem;color:#4fd18b"></span>
+        </div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="portaltext">
+      <section>
+        <h3>Customer portal wording</h3>
+        <div class="pad">
+          <p class="note" style="margin:0 0 14px">
+            What customers read on the portal. Set these to match your actual
+            hardware &mdash; a bottle chute, a coin slot and a card reader need
+            different instructions. Leave a field empty to use the default.
+          </p>
+          <div id="portalTextFields"></div>
+          <button class="act go" onclick="savePortalText()" style="margin-top:12px">
+            Save wording
+          </button>
+          <span id="portalTextMsg" style="font-size:.8rem;margin-left:8px"></span>
         </div>
       </section>
     </div>
@@ -236,17 +271,23 @@
 
     <div class="panel" data-panel="settings">
       <section>
-        <h3>Change admin password</h3>
+        <h3>Admin credentials</h3>
         <div class="pad">
+          <p class="note" style="margin:0 0 12px">
+            Signed in as <code id="currentUser">--</code>. Fill in only what you
+            want to change &mdash; the current password is always required.
+          </p>
           <div class="row">
             <input type="password" id="pwCurrent" placeholder="Current password" size="20">
-            <input type="password" id="pwNew" placeholder="New password" size="20">
+            <input type="text" id="userNew" placeholder="New username (optional)" size="20"
+                   autocapitalize="none" spellcheck="false">
+            <input type="password" id="pwNew" placeholder="New password (optional)" size="20">
             <input type="password" id="pwConfirm" placeholder="Confirm new password" size="20">
-            <button class="act go" onclick="changePassword()">Update password</button>
+            <button class="act go" onclick="changeCredentials()">Update credentials</button>
           </div>
           <p class="note" style="margin:12px 0 0">
-            Changing the password signs out every other browser that is
-            currently logged in. You will stay signed in here.
+            Any change signs out every other browser that is currently logged
+            in. You will stay signed in here.
           </p>
           <p id="pwMsg" style="font-size:.8rem;margin:8px 0 0"></p>
         </div>
@@ -323,26 +364,45 @@ function dot(state) {
 }
 
 // ---- rendering ----
+function prettyKey(k) {
+  return String(k).replace(/[_-]+/g, ' ').replace(/^./, c => c.toUpperCase());
+}
+
+function prettyValue(v) {
+  if (v === true) return 'yes';
+  if (v === false) return 'no';
+  if (v === null || v === undefined) return 'not reported';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+
 function renderSystemStatus(sys) {
-  const d = sys.detection_side;
+  const d = sys.payment_device;
   const g = sys.gateway;
   const f = sys.firewall;
 
-  const detectorState = !d.last_seen ? 'unknown' : (d.online ? 'ok' : 'bad');
-  const detectorText = d.last_seen
+  const deviceState = !d.last_seen ? 'unknown' : (d.online ? 'ok' : 'bad');
+  const deviceText = d.last_seen
     ? (d.online ? 'Online' : 'OFFLINE') + ' (last heartbeat ' + d.seconds_since_seen + 's ago)'
-    : 'Never reported in - ESP32 not connected yet';
+    : 'Never reported in - no payment device connected yet';
 
   const rows = [
-    ['Bottle detector (ESP32)', detectorState, detectorText],
-    ['Bin', d.bin_full ? 'bad' : (d.last_seen ? 'ok' : 'unknown'),
-      d.last_seen ? (d.bin_full ? 'FULL - empty it, the machine has stopped accepting bottles'
-                                : 'Not full' + (d.bin_distance_cm ? ' (' + d.bin_distance_cm + ' cm clear)' : ''))
-                  : 'No reading yet'],
-    ['Accepting bottles', d.accepting_bottles ? 'ok' : 'warn',
-      d.accepting_bottles ? 'Yes' : 'No - see above'],
+    ['Payment device', deviceState, deviceText],
+    ['Accepting payment', d.accepting ? 'ok' : 'warn',
+      d.accepting ? 'Yes' : (d.message || (d.online ? 'No - the device says it cannot'
+                                                    : 'No - the device is offline'))],
     ['Firmware', d.firmware ? 'ok' : 'unknown', d.firmware || 'not reported'],
+    ['Payment methods', sys.configured ? 'ok' : 'bad',
+      sys.configured ? 'configured' : 'NONE - nothing can be granted until a rate exists'],
   ];
+
+  // Whatever else the device reported, shown as-is. The gateway does not
+  // know or care whether that is a bin level, a hopper count or a
+  // terminal id -- so it renders every key rather than a fixed list.
+  Object.entries(d.metadata || {}).forEach(([k, v]) => {
+    if (k === 'accepting' || k === 'message') return;   // already shown above
+    rows.push(['device: ' + prettyKey(k), 'ok', prettyValue(v)]);
+  });
 
   Object.entries(g.services).forEach(([name, state]) => {
     const cls = state === 'active' ? 'ok' : (state === 'unavailable' ? 'unknown' : 'bad');
@@ -375,13 +435,23 @@ function renderSystemStatus(sys) {
 }
 
 async function load() {
-  const [stats, sessions, rates, vouchers, tx, sys, blocklist] = await Promise.all([
+  const [stats, sessions, rates, vouchers, tx, sys, blocklist, cap] = await Promise.all([
     getJSON('/admin/stats'), getJSON('/sessions'), getJSON('/rates'),
     getJSON('/vouchers'), getJSON('/transactions'),
-    getJSON('/admin/system-status'), getJSON('/admin/blocklist')
+    getJSON('/admin/system-status'), getJSON('/admin/blocklist'),
+    getJSON('/admin/session-cap')
   ]);
 
+  const capField = document.getElementById('capHours');
+  if (document.activeElement !== capField) {
+    capField.value = cap.session_cap_seconds ? cap.session_cap_seconds / 3600 : 0;
+  }
+
   document.getElementById('refreshed').innerText = new Date().toLocaleTimeString();
+
+  getJSON('/admin/session').then(me => {
+    if (me.username) document.getElementById('currentUser').innerText = me.username;
+  }).catch(() => {});
 
   renderSystemStatus(sys);
 
@@ -393,11 +463,11 @@ async function load() {
   badge.innerText = live;
 
   document.getElementById('stats').innerHTML = [
-    ['total_bottles', 'Bottles collected'],
+    ['total_payments', 'Payments taken'],
     ['total_minutes_granted', 'Minutes granted'],
     ['active_sessions', 'Active now'],
     ['paused_sessions', 'Paused'],
-    ['pending_claims', 'Awaiting bottle'],
+    ['pending_claims', 'Awaiting payment'],
     ['known_devices', 'Known devices']
   ].map(([k, label]) =>
     '<div class="stat"><div class="n">' + stats[k] + '</div><div class="l">' + label + '</div></div>'
@@ -405,13 +475,13 @@ async function load() {
 
   document.getElementById('sessionsWrap').innerHTML = sessions.length ? (
     '<table><thead><tr><th>MAC</th><th>Status</th><th>Time left</th>' +
-    '<th>Bottles</th><th>Claimed</th><th>Actions</th></tr></thead><tbody>' +
+    '<th>Payments</th><th>Claimed</th><th>Actions</th></tr></thead><tbody>' +
     sessions.map(s =>
       '<tr><td class="mono">' + esc(s.mac_address) + '</td>' +
       '<td><span class="pill ' + esc(s.status) + '">' + esc(s.status) + '</span>' +
-        (s.pending_claim ? ' <span class="pill pending">awaiting bottle</span>' : '') + '</td>' +
+        (s.pending_claim ? ' <span class="pill pending">awaiting payment</span>' : '') + '</td>' +
       '<td class="mono">' + fmtDuration(s.remaining_seconds) + '</td>' +
-      '<td>' + (s.bottles_inserted || 0) + '</td>' +
+      '<td>' + (s.payments_made || 0) + '</td>' +
       '<td style="color:#7d93a8">' + fmtTime(s.claimed_at) + '</td>' +
       '<td>' +
         (s.status === 'active' ? '<button class="act" onclick="act(\'/pause\',\'' + esc(s.mac_address) + '\')">Pause</button>' : '') +
@@ -433,10 +503,15 @@ async function load() {
   ) : '<div class="empty">No devices are blocked.</div>';
 
   document.getElementById('ratesWrap').innerHTML = rates.length ? (
-    '<table><thead><tr><th>Payment method</th><th>Minutes per unit</th></tr></thead><tbody>' +
-    rates.map(r => '<tr><td>' + esc(r.payment_method) + '</td><td>' + r.minutes_per_unit + '</td></tr>').join('') +
+    '<table><thead><tr><th>Trigger name</th><th>Minutes earned</th><th></th></tr></thead><tbody>' +
+    rates.map(r =>
+      '<tr><td><code>' + esc(r.payment_method) + '</code></td>' +
+      '<td>' + r.minutes_per_unit + ' min</td>' +
+      '<td>' + (rates.length > 1
+        ? '<button class="act danger" onclick="removeRate(\'' + esc(r.payment_method) + '\')">Remove</button>'
+        : '<span class="note">only method</span>') + '</td></tr>').join('') +
     '</tbody></table>'
-  ) : '<div class="empty">No rates configured.</div>';
+  ) : '<div class="empty">No rates configured - nothing can be granted.</div>';
 
   document.getElementById('vouchersWrap').innerHTML = vouchers.length ? (
     '<table><thead><tr><th>Code</th><th>Minutes</th><th>Status</th><th>Created</th></tr></thead><tbody>' +
@@ -502,6 +577,61 @@ async function saveRate() {
   load();
 }
 
+async function removeRate(method) {
+  if (!confirm('Remove the payment method "' + method + '"?')) return;
+  const { ok, data } = await post('/rates/delete', { payment_method: method });
+  if (!ok) alert(data.detail || 'Could not remove that method');
+  load();
+}
+
+async function saveCap() {
+  const hours = document.getElementById('capHours').value;
+  const { ok, data } = await post('/admin/session-cap', { hours: Number(hours) });
+  const el = document.getElementById('capMsg');
+  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.innerText = ok
+    ? (data.session_cap_seconds ? 'Cap set to ' + (data.session_cap_seconds / 3600) + ' hr'
+                                : 'Cap removed')
+    : (data.detail || 'Could not save the cap');
+  load();
+}
+
+// Portal wording. Rendered from the server's own key list, so adding a
+// new string server-side does not need this page edited too.
+let portalTextDefaults = {};
+
+async function loadPortalText() {
+  const data = await getJSON('/admin/portal-text');
+  portalTextDefaults = data.defaults || {};
+
+  document.getElementById('portalTextFields').innerHTML =
+    Object.keys(portalTextDefaults).map(key => {
+      const current = (data.text || {})[key] || '';
+      const isDefault = current === portalTextDefaults[key];
+      return '<div style="margin-bottom:12px">' +
+        '<label style="display:block;font-size:.75rem;color:#9db2c6;margin-bottom:4px">' +
+        esc(prettyKey(key)) + '</label>' +
+        '<input id="pt_' + esc(key) + '" style="width:100%;max-width:640px" ' +
+        'value="' + (isDefault ? '' : esc(current)) + '" ' +
+        'placeholder="' + esc(portalTextDefaults[key]) + '">' +
+        '</div>';
+    }).join('');
+}
+
+async function savePortalText() {
+  const values = {};
+  Object.keys(portalTextDefaults).forEach(key => {
+    values[key] = document.getElementById('pt_' + key).value;
+  });
+
+  const { ok, data } = await post('/admin/portal-text', { text: values });
+  const el = document.getElementById('portalTextMsg');
+  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.innerText = ok ? 'Saved. Customers see this on their next refresh.'
+                    : (data.detail || 'Could not save the wording.');
+  if (ok) loadPortalText();
+}
+
 async function makeVoucher() {
   const minutes = Number(document.getElementById('voucherMinutes').value || 30);
   const { ok, data } = await post('/vouchers', { minutes: minutes });
@@ -564,21 +694,24 @@ async function restoreBackup() {
   load();
 }
 
-async function changePassword() {
+async function changeCredentials() {
   const el = document.getElementById('pwMsg');
   const { ok, data } = await post('/admin/password', {
     current_password: document.getElementById('pwCurrent').value,
+    new_username: document.getElementById('userNew').value,
     new_password: document.getElementById('pwNew').value,
     confirm: document.getElementById('pwConfirm').value
   });
 
   el.style.color = ok ? '#4fd18b' : '#e08585';
-  el.innerText = ok ? 'Password updated. Other sessions were signed out.'
-                    : (data.detail || 'Could not change the password.');
+  el.innerText = ok
+    ? 'Credentials updated (username: ' + data.username + '). Other sessions were signed out.'
+    : (data.detail || 'Could not change the credentials.');
+
   if (ok) {
-    document.getElementById('pwCurrent').value = '';
-    document.getElementById('pwNew').value = '';
-    document.getElementById('pwConfirm').value = '';
+    ['pwCurrent', 'userNew', 'pwNew', 'pwConfirm']
+      .forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('currentUser').innerText = data.username;
   }
 }
 
@@ -598,6 +731,7 @@ function panelFromHash() {
 window.addEventListener('hashchange', panelFromHash);
 panelFromHash();
 load();
+loadPortalText().catch(() => {});
 setInterval(load, 10000);
 </script>
 </body>

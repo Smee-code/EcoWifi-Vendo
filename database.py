@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -51,14 +52,14 @@ def init_db():
                 expires_at TEXT,
                 status TEXT DEFAULT 'blocked',
                 claimed_at TEXT,
-                bottles_inserted INTEGER DEFAULT 0
+                payments_made INTEGER DEFAULT 0
             )
         """)
 
-        # A claim is a QUEUE ENTRY: "this device tapped Insert Plastic
-        # Bottle and the next validated bottle belongs to it." Kept
+        # A claim is a QUEUE ENTRY: "this device asked to pay, and the
+        # next payment the validator confirms belongs to it." Kept
         # separate from sessions on purpose -- a customer who is already
-        # connected can queue another bottle to top up, which is
+        # connected can queue another payment to top up, which is
         # impossible if 'pending' is a session status.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS claims (
@@ -101,18 +102,22 @@ def init_db():
             )
         """)
 
-        # Single-row table holding whatever the ESP32 last told us about
-        # itself. Persisted rather than kept in memory so the dashboard
-        # does not claim "never seen" every time the app restarts.
+        # Single-row table holding whatever the payment device last told
+        # us about itself. Persisted rather than kept in memory so the
+        # dashboard does not claim "never seen" after every restart.
+        #
+        # `metadata` is deliberately freeform JSON: a bottle validator
+        # reports bin levels, a coin acceptor reports a hopper count, a
+        # card reader reports a terminal id. The gateway does not need to
+        # know which -- it stores what arrives and the dashboard renders
+        # whatever keys are present.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS device_status (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 last_seen TEXT,
-                bin_full INTEGER DEFAULT 0,
-                bin_distance_cm REAL,
-                bottles_today INTEGER DEFAULT 0,
                 firmware TEXT,
-                source_ip TEXT
+                source_ip TEXT,
+                metadata TEXT
             )
         """)
         conn.execute("INSERT OR IGNORE INTO device_status (id) VALUES (1)")
@@ -146,21 +151,20 @@ def init_db():
 
         _migrate(conn)
 
-        existing = conn.execute("SELECT COUNT(*) AS c FROM rates").fetchone()
-        if existing["c"] == 0:
-            conn.execute(
-                "INSERT INTO rates (payment_method, minutes_per_unit) VALUES (?, ?)",
-                ("bottle", 30),
-            )
+        # No rate is seeded. What one payment trigger is worth is a
+        # business decision belonging to whoever runs the machine, and a
+        # guessed default would quietly hand out time at a rate nobody
+        # chose. The operator defines rates in first-run setup, and
+        # /claim and /grant refuse to run until at least one exists.
 
 
 def _migrate(conn):
     """Brings a pre-existing database up to the current schema.
 
     The original schema stored `minutes_remaining`, had no pause support,
-    and tracked pending claims as a session status. Anything created by
-    that version is converted in place rather than dropped, so an Orange
-    Pi that has already taken real bottles does not lose its sessions."""
+    tracked pending claims as a session status, and named things after
+    bottles. Anything created by an older version is converted in place
+    rather than dropped, so a machine already in service keeps its data."""
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
 
     # Decide this up front: the ALTERs below change the table, so testing
@@ -171,8 +175,13 @@ def _migrate(conn):
         conn.execute("ALTER TABLE sessions ADD COLUMN seconds_remaining INTEGER DEFAULT 0")
     if "expires_at" not in cols:
         conn.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
-    if "bottles_inserted" not in cols:
-        conn.execute("ALTER TABLE sessions ADD COLUMN bottles_inserted INTEGER DEFAULT 0")
+    if "payments_made" not in cols:
+        if "bottles_inserted" in cols:
+            # Rename in place so a machine that has already taken payments
+            # keeps its per-device counts.
+            conn.execute("ALTER TABLE sessions RENAME COLUMN bottles_inserted TO payments_made")
+        else:
+            conn.execute("ALTER TABLE sessions ADD COLUMN payments_made INTEGER DEFAULT 0")
 
     if needs_conversion:
         conn.execute("""
@@ -190,6 +199,8 @@ def _migrate(conn):
                  row["mac_address"]),
             )
 
+    _migrate_device_status(conn)
+
     # Old 'pending' sessions become real queue entries, so nobody who was
     # mid-claim during an upgrade loses their place.
     stale_pending = conn.execute(
@@ -204,6 +215,48 @@ def _migrate(conn):
             "UPDATE sessions SET status = 'blocked' WHERE mac_address = ?",
             (row["mac_address"],),
         )
+
+
+def _migrate_device_status(conn):
+    """Folds the old bottle-specific columns into freeform metadata.
+
+    The table used to carry bin_full / bin_distance_cm / bottles_today,
+    which only made sense for a bottle validator. Their values are moved
+    into the JSON blob rather than dropped, so a machine that has been
+    running keeps its last reading."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(device_status)").fetchall()}
+    if "metadata" in cols:
+        return
+
+    row = conn.execute("SELECT * FROM device_status WHERE id = 1").fetchone()
+    carried = {}
+    if row:
+        for old_key in ("bin_full", "bin_distance_cm", "bottles_today"):
+            if old_key in cols and row[old_key] is not None:
+                value = row[old_key]
+                if old_key == "bin_full":
+                    value = bool(value)
+                carried[old_key] = value
+
+    last_seen = row["last_seen"] if row and "last_seen" in cols else None
+    firmware = row["firmware"] if row and "firmware" in cols else None
+    source_ip = row["source_ip"] if row and "source_ip" in cols else None
+
+    conn.execute("DROP TABLE device_status")
+    conn.execute("""
+        CREATE TABLE device_status (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_seen TEXT,
+            firmware TEXT,
+            source_ip TEXT,
+            metadata TEXT
+        )
+    """)
+    conn.execute(
+        """INSERT INTO device_status (id, last_seen, firmware, source_ip, metadata)
+           VALUES (1, ?, ?, ?, ?)""",
+        (last_seen, firmware, source_ip, json.dumps(carried) if carried else None),
+    )
 
 
 # ---- sessions ----
@@ -234,7 +287,7 @@ def _decorate(row, pending=False):
 def _ensure_session(conn, mac_address):
     conn.execute(
         """INSERT INTO sessions
-           (mac_address, seconds_remaining, expires_at, status, claimed_at, bottles_inserted)
+           (mac_address, seconds_remaining, expires_at, status, claimed_at, payments_made)
            VALUES (?, 0, NULL, 'blocked', ?, 0)
            ON CONFLICT(mac_address) DO NOTHING""",
         (mac_address, _iso(_now())),
@@ -275,15 +328,65 @@ def get_expired_sessions():
         return [s for s in (_decorate(r) for r in rows) if s["remaining_seconds"] <= 0]
 
 
+# Customer-facing wording. Every string here names the payment action, so
+# it has to be the operator's to change: a bottle validator, a coin slot
+# and a card reader need completely different instructions.
+DEFAULT_PORTAL_TEXT = {
+    "action_label": "Insert payment",
+    "action_hint": "Adds time to your session",
+    "notice": "Follow the instructions on the machine to add time.",
+    "modal_title": "Waiting for payment",
+    "modal_body": "Complete the payment on the machine. Your device is credited "
+                  "as soon as the validator confirms it.",
+    "waiting_text": "Waiting for the machine to confirm",
+    "tagline": "Pay on the machine. Get online.",
+}
+
+PORTAL_TEXT_PREFIX = "portal_text_"
+
+
+def get_portal_text():
+    """Merged over the defaults, so a key the operator never set still
+    renders rather than showing a blank button."""
+    text = dict(DEFAULT_PORTAL_TEXT)
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT key, value FROM settings WHERE key LIKE ?",
+            (PORTAL_TEXT_PREFIX + "%",),
+        ).fetchall()
+    for row in rows:
+        key = row["key"][len(PORTAL_TEXT_PREFIX):]
+        if key in DEFAULT_PORTAL_TEXT and row["value"]:
+            text[key] = row["value"]
+    return text
+
+
+def set_portal_text(values):
+    """Stores only known keys. An empty value resets that key to default."""
+    applied = {}
+    for key, value in (values or {}).items():
+        if key not in DEFAULT_PORTAL_TEXT:
+            continue
+        value = (value or "").strip()
+        if value:
+            set_setting(PORTAL_TEXT_PREFIX + key, value)
+        else:
+            with get_db() as conn:
+                conn.execute("DELETE FROM settings WHERE key = ?",
+                             (PORTAL_TEXT_PREFIX + key,))
+        applied[key] = value
+    return get_portal_text()
+
+
 DEFAULT_SESSION_CAP_SECONDS = 6 * 3600
 
 
 def get_session_cap_seconds():
     """Maximum time one device may hold at once. 0 means no cap.
 
-    A cap stops a single customer feeding in bottles all day and holding
-    bandwidth other people are queuing for, and it is what the portal's
-    progress bar is measured against."""
+    A cap stops a single customer paying in all day and holding bandwidth
+    other people are queuing for, and it is what the portal progress bar
+    is measured against."""
     stored = get_setting("session_cap_seconds")
     if stored is None:
         return DEFAULT_SESSION_CAP_SECONDS
@@ -297,7 +400,7 @@ def set_session_cap_seconds(seconds):
     set_setting("session_cap_seconds", str(max(0, int(seconds))))
 
 
-def credit_time(mac_address, minutes, bottles=0):
+def credit_time(mac_address, minutes, payments=0):
     """Adds time to a session and starts it running.
 
     Topping up an already-running session extends its expiry rather than
@@ -325,14 +428,14 @@ def credit_time(mac_address, minutes, bottles=0):
         seconds = requested
 
     if seconds <= 0:
-        # Still count the bottle -- it went in the bin either way.
-        if bottles:
+        # Still count the payment -- the machine took it either way.
+        if payments:
             with get_db() as conn:
                 _ensure_session(conn, mac_address)
                 conn.execute(
-                    """UPDATE sessions SET bottles_inserted = bottles_inserted + ?
+                    """UPDATE sessions SET payments_made = payments_made + ?
                         WHERE mac_address = ?""",
-                    (bottles, mac_address),
+                    (payments, mac_address),
                 )
         return 0
 
@@ -342,15 +445,15 @@ def credit_time(mac_address, minutes, bottles=0):
             "SELECT * FROM sessions WHERE mac_address = ?", (mac_address,)
         ).fetchone()
 
-        bottles_total = (row["bottles_inserted"] or 0) + bottles
+        payments_total = (row["payments_made"] or 0) + payments
 
         if row["status"] == "paused":
             conn.execute(
                 """UPDATE sessions
                       SET seconds_remaining = seconds_remaining + ?,
-                          bottles_inserted = ?
+                          payments_made = ?
                     WHERE mac_address = ?""",
-                (seconds, bottles_total, mac_address),
+                (seconds, payments_total, mac_address),
             )
             return seconds
 
@@ -365,10 +468,10 @@ def credit_time(mac_address, minutes, bottles=0):
                   SET expires_at = ?,
                       seconds_remaining = ?,
                       status = 'active',
-                      bottles_inserted = ?
+                      payments_made = ?
                 WHERE mac_address = ?""",
             (_iso(new_expiry), int((new_expiry - _now()).total_seconds()),
-             bottles_total, mac_address),
+             payments_total, mac_address),
         )
 
     return seconds
@@ -434,14 +537,14 @@ def set_status(mac_address, status):
         )
 
 
-# ---- claims (the bottle queue) ----
+# ---- claims (the payment queue) ----
 
 def create_claim(mac_address):
-    """Queues this device for the next validated bottle.
+    """Queues this device for the next confirmed payment.
 
     Tapping the button repeatedly does NOT stack up claims -- one open
     claim per device, so a customer cannot hoard the queue and take
-    bottles that other people fed in."""
+    payments that other people made."""
     with get_db() as conn:
         _ensure_session(conn, mac_address)
         existing = conn.execute(
@@ -463,7 +566,7 @@ def create_claim(mac_address):
 
 
 def get_oldest_pending():
-    """The claim the next bottle belongs to (FIFO)."""
+    """The claim the next confirmed payment belongs to (FIFO)."""
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM claims WHERE granted = 0 ORDER BY created_at ASC, id ASC LIMIT 1"
@@ -472,7 +575,7 @@ def get_oldest_pending():
 
 
 def mark_claim_granted(claim_id):
-    """Closes a claim. Guarded on granted = 0 so two bottles arriving at
+    """Closes a claim. Guarded on granted = 0 so two payments arriving at
     once cannot both consume the same claim -- returns False if this call
     lost the race."""
     with get_db() as conn:
@@ -519,12 +622,22 @@ def get_transactions(limit=100):
 
 
 def get_stats():
-    """Cumulative metrics for the admin dashboard (spec section 3.3:
-    bottle counts and usage history for research)."""
+    """Cumulative metrics for the admin dashboard.
+
+    Payments are counted across every configured method rather than one
+    hardcoded name: filtering on 'bottle' would report zero forever on a
+    machine fitted with a coin acceptor or a card reader."""
     with get_db() as conn:
-        bottles = conn.execute(
-            "SELECT COALESCE(SUM(quantity), 0) AS n FROM transactions WHERE payment_method = 'bottle'"
+        payments = conn.execute(
+            """SELECT COALESCE(SUM(quantity), 0) AS n FROM transactions
+                WHERE payment_method <> 'voucher'"""
         ).fetchone()["n"]
+        by_method = {
+            r["payment_method"]: r["n"] for r in conn.execute(
+                """SELECT payment_method, COALESCE(SUM(quantity), 0) AS n
+                     FROM transactions GROUP BY payment_method"""
+            ).fetchall()
+        }
         minutes = conn.execute(
             "SELECT COALESCE(SUM(minutes_credited), 0) AS n FROM transactions"
         ).fetchone()["n"]
@@ -540,7 +653,8 @@ def get_stats():
         }
 
     return {
-        "total_bottles": bottles,
+        "total_payments": payments,
+        "payments_by_method": by_method,
         "total_minutes_granted": minutes,
         "total_transactions": tx,
         "known_devices": devices,
@@ -593,32 +707,42 @@ def get_vouchers(limit=100):
         return [dict(row) for row in rows]
 
 
-# ---- device status (the ESP32 detection side) ----
+# ---- device status (the external payment device) ----
 
-# How long without a heartbeat before the detection side counts as
-# offline. Needs to be comfortably longer than the ESP32's heartbeat
+# How long without a heartbeat before the payment device counts as
+# offline. Needs to be comfortably longer than the device's heartbeat
 # interval, or a single dropped packet shows up as an outage.
-ESP32_OFFLINE_AFTER_SECONDS = 90
+DEVICE_OFFLINE_AFTER_SECONDS = 90
 
 
-def record_heartbeat(bin_full=None, bin_distance_cm=None, bottles_today=None,
-                     firmware=None, source_ip=None):
-    """Stores a heartbeat from the ESP32.
+# Metadata keys the gateway itself understands. Everything else is stored
+# and displayed verbatim without the gateway caring what it means.
+ACCEPTING_KEY = "accepting"     # bool: is the device able to take payment
+MESSAGE_KEY = "message"         # str: shown to customers when not accepting
 
-    Every field except the timestamp is optional, so an early firmware
-    that only says 'I am alive' still works, and fields it does not
-    report keep their previous value instead of being wiped."""
+
+def record_heartbeat(firmware=None, source_ip=None, metadata=None):
+    """Stores a heartbeat from the payment device.
+
+    Everything except the timestamp is optional, so firmware that only
+    says 'I am alive' still works. Metadata keys are MERGED into whatever
+    was reported before, so a device that sends its firmware once and
+    then only sends a level reading does not wipe the rest."""
     with get_db() as conn:
-        sets = ["last_seen = ?"]
-        params = [_iso(_now())]
+        row = conn.execute("SELECT metadata FROM device_status WHERE id = 1").fetchone()
+        merged = {}
+        if row and row["metadata"]:
+            try:
+                merged = json.loads(row["metadata"])
+            except ValueError:
+                merged = {}
+        if metadata:
+            merged.update(metadata)
 
-        for column, value in (
-            ("bin_full", None if bin_full is None else int(bool(bin_full))),
-            ("bin_distance_cm", bin_distance_cm),
-            ("bottles_today", bottles_today),
-            ("firmware", firmware),
-            ("source_ip", source_ip),
-        ):
+        sets = ["last_seen = ?", "metadata = ?"]
+        params = [_iso(_now()), json.dumps(merged)]
+
+        for column, value in (("firmware", firmware), ("source_ip", source_ip)):
             if value is not None:
                 sets.append(f"{column} = ?")
                 params.append(value)
@@ -629,25 +753,39 @@ def record_heartbeat(bin_full=None, bin_distance_cm=None, bottles_today=None,
 
 
 def get_device_status():
-    """Current view of the detection side, with liveness derived from the
-    last heartbeat rather than stored -- a stored 'online' flag would stay
-    online forever once the ESP32 stopped calling."""
+    """Current view of the payment device.
+
+    Liveness is derived from the last heartbeat rather than stored: a
+    stored 'online' flag would stay online forever once the device
+    stopped calling, which is exactly when it matters."""
     with get_db() as conn:
         row = conn.execute("SELECT * FROM device_status WHERE id = 1").fetchone()
 
     status = dict(row) if row else {}
-    last_seen = _parse(status.get("last_seen"))
 
+    metadata = {}
+    if status.get("metadata"):
+        try:
+            metadata = json.loads(status["metadata"])
+        except ValueError:
+            metadata = {}
+    status["metadata"] = metadata
+
+    last_seen = _parse(status.get("last_seen"))
     if last_seen is None:
         status["online"] = False
         status["seconds_since_seen"] = None
     else:
         age = (_now() - last_seen).total_seconds()
         status["seconds_since_seen"] = int(age)
-        status["online"] = age <= ESP32_OFFLINE_AFTER_SECONDS
+        status["online"] = age <= DEVICE_OFFLINE_AFTER_SECONDS
 
-    status["bin_full"] = bool(status.get("bin_full"))
-    status["offline_after_seconds"] = ESP32_OFFLINE_AFTER_SECONDS
+    # A device may declare itself unable to take payment (bin full, hopper
+    # jammed, terminal offline). Absent that key, being online is enough.
+    declared = metadata.get(ACCEPTING_KEY)
+    status["accepting"] = bool(status["online"]) and (True if declared is None else bool(declared))
+    status["message"] = metadata.get(MESSAGE_KEY)
+    status["offline_after_seconds"] = DEVICE_OFFLINE_AFTER_SECONDS
     return status
 
 
@@ -704,6 +842,23 @@ def get_all_rates():
         return [dict(row) for row in rows]
 
 
+def has_rates():
+    """True once the operator has defined at least one payment trigger.
+
+    Nothing can be granted before this: without a rate there is no answer
+    to 'how much time is one payment worth'."""
+    with get_db() as conn:
+        return conn.execute("SELECT COUNT(*) AS c FROM rates").fetchone()["c"] > 0
+
+
+def delete_rate(payment_method):
+    with get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM rates WHERE payment_method = ?", (payment_method,)
+        )
+        return cur.rowcount > 0
+
+
 def set_rate(payment_method, minutes_per_unit):
     with get_db() as conn:
         conn.execute(
@@ -732,6 +887,14 @@ def set_setting(key, value):
 
 def has_admin_password():
     return get_setting("admin_password_hash") is not None
+
+
+def get_admin_username():
+    return get_setting("admin_username")
+
+
+def store_admin_username(username):
+    set_setting("admin_username", username.strip().lower())
 
 
 def store_admin_password(salt_b64, hash_b64, iterations):

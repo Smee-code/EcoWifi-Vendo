@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up payment rates</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center;
+         justify-content: center; background: #101820; color: #e6edf3;
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .card { width: 100%; max-width: 560px; background: #16212c; padding: 30px 26px;
+          border: 1px solid #223040; border-radius: 10px; margin: 16px; }
+  h1 { margin: 0 0 4px; font-size: 1.15rem; }
+  p.sub { margin: 0 0 18px; color: #7d93a8; font-size: .82rem; line-height: 1.5; }
+  .why { background: #14303f; color: #9fd6f0; font-size: .78rem; padding: 11px 13px;
+         border-radius: 6px; margin-bottom: 20px; line-height: 1.5; }
+  label { display: block; font-size: .78rem; color: #9db2c6; margin: 14px 0 6px; }
+  input { width: 100%; background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
+          border-radius: 6px; padding: 10px; font-size: .95rem; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .row > div.narrow { flex: 0 0 130px; }
+  button { width: 100%; margin-top: 20px; padding: 11px; border: 0; border-radius: 6px;
+           background: #226e43; color: #fff; font-size: .95rem; font-weight: 600;
+           cursor: pointer; }
+  button:hover:enabled { background: #2b8a54; }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  button.ghost { background: #2f4054; margin-top: 10px; }
+  button.ghost:hover:enabled { background: #3b5069; }
+  #msg { margin: 14px 0 0; font-size: .82rem; min-height: 1.1em; color: #e08585; }
+  table { width: 100%; border-collapse: collapse; font-size: .84rem; margin-top: 18px; }
+  th { text-align: left; padding: 8px 0; color: #7d93a8; font-weight: 600;
+       border-bottom: 1px solid #223040; }
+  td { padding: 8px 0; border-bottom: 1px solid #1c2735; }
+  td.v { text-align: right; color: #4fd18b; font-weight: 600; }
+  .examples { margin-top: 6px; font-size: .74rem; color: #6b8299; line-height: 1.6; }
+  code { background: #0f1923; padding: 1px 5px; border-radius: 3px; color: #8fd6ff; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>What is one payment worth?</h1>
+    <p class="sub">Nearly there. Before the machine can grant any time, tell it
+      what your payment hardware sends and how much WiFi time that earns.</p>
+
+    <div class="why">
+      This ships with no default rate on purpose. The gateway does not know
+      whether your machine takes bottles, coins, tokens or cards &mdash; and a
+      guessed rate would quietly hand out time at a price you never chose.
+    </div>
+
+    <form onsubmit="addRate(event)">
+      <div class="row">
+        <div>
+          <label for="method">Payment trigger name</label>
+          <input id="method" placeholder="bottle" autocapitalize="none"
+                 spellcheck="false" autofocus>
+        </div>
+        <div class="narrow">
+          <label for="minutes">Minutes earned</label>
+          <input id="minutes" type="number" min="1" placeholder="30">
+        </div>
+      </div>
+      <p class="examples">
+        The name is what your hardware sends as <code>payment_method</code> to
+        <code>POST /grant</code>. Examples: <code>bottle</code>,
+        <code>coin</code>, <code>coin_5php</code>, <code>token</code>,
+        <code>card</code>.
+      </p>
+      <button type="submit" id="addBtn">Add this rate</button>
+    </form>
+
+    <div id="rateList"></div>
+    <button class="ghost" id="doneBtn" onclick="finish()" style="display:none">
+      Done &mdash; open the dashboard
+    </button>
+    <p id="msg"></p>
+  </div>
+
+<script>
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function say(text, good) {
+  const el = document.getElementById('msg');
+  el.style.color = good ? '#4fd18b' : '#e08585';
+  el.innerText = text || '';
+}
+
+async function loadRates() {
+  const res = await fetch('/rates');
+  if (res.status === 401) { window.location = '/admin/login'; return; }
+  const rates = await res.json();
+
+  document.getElementById('rateList').innerHTML = rates.length
+    ? '<table><thead><tr><th>Payment trigger</th><th style="text-align:right">Minutes</th>' +
+      '</tr></thead><tbody>' + rates.map(r =>
+        '<tr><td><code>' + esc(r.payment_method) + '</code></td>' +
+        '<td class="v">' + r.minutes_per_unit + ' min</td></tr>').join('') +
+      '</tbody></table>'
+    : '';
+
+  document.getElementById('doneBtn').style.display = rates.length ? 'block' : 'none';
+}
+
+async function addRate(e) {
+  e.preventDefault();
+  const btn = document.getElementById('addBtn');
+  const method = document.getElementById('method').value.trim();
+  const minutes = document.getElementById('minutes').value;
+
+  if (!method || !minutes) { say('Enter both a name and a number of minutes.'); return; }
+
+  btn.disabled = true;
+  const res = await fetch('/rates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payment_method: method, minutes_per_unit: Number(minutes) })
+  });
+  btn.disabled = false;
+
+  if (res.status === 401) { window.location = '/admin/login'; return; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { say(data.detail || 'Could not save that rate.'); return; }
+
+  document.getElementById('method').value = '';
+  document.getElementById('minutes').value = '';
+  say('Added ' + data.payment_method + ' = ' + data.minutes_per_unit + ' min. ' +
+      'Add another, or open the dashboard.', true);
+  loadRates();
+}
+
+function finish() { window.location = '/admin'; }
+
+loadRates();
+</script>
+</body>
+</html>

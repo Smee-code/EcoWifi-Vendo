@@ -10,6 +10,7 @@ this app. So the admin surface is exposed to the public by design, and
 "nobody can reach it anyway" is never an available assumption.
 """
 import os
+import re
 import hmac
 import base64
 import hashlib
@@ -82,6 +83,36 @@ def verify_password(password: str, salt_b64: str, hash_b64: str,
         "sha256", password.encode("utf-8"), salt, iterations or LEGACY_ITERATIONS
     )
     return hmac.compare_digest(candidate, expected)
+
+
+DEFAULT_USERNAME = "admin"
+USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+
+
+def normalise_username(value: str) -> str:
+    """Usernames are matched case-insensitively and trimmed, so somebody
+    typing 'Admin ' on a phone keyboard still gets in."""
+    return (value or "").strip().lower()
+
+
+def valid_username(value: str) -> bool:
+    return bool(USERNAME_RE.match((value or "").strip()))
+
+
+def verify_username(candidate: str, stored: str) -> bool:
+    """Constant-time, for the same reason as the password.
+
+    Comparing normally would let an attacker measure which usernames
+    exist; combined with the shared 'wrong username or password' message
+    below, this keeps valid usernames from leaking."""
+    return hmac.compare_digest(normalise_username(candidate),
+                               normalise_username(stored))
+
+
+def bootstrap_username_from_env():
+    value = os.getenv("ECOWIFI_ADMIN_USERNAME")
+    value = (value or "").strip()
+    return value if value else None
 
 
 def new_session_token() -> str:

@@ -1,100 +1,144 @@
-# EcoWifi Vendo -- server-side software
+# EcoWifi Vendo — piso-wifi gateway software
 
-This is the complete Orange Pi gateway software matching
-`EcoWiFi_Full_System_Components.docx`: FastAPI app, local nftables
-firewall control, and the OS-level hostapd/dnsmasq/nftables setup, all
-wired together with systemd so it starts automatically on boot.
+Captive-portal gateway software for a vending-machine-style WiFi hotspot,
+in the manner of Philippine piso-wifi systems (LPB Piso WiFi, PisoFi).
+Customers connect to an open SSID, pay at the machine, and get metered
+internet access.
 
-**This does not include the ESP32 firmware.** Per the spec document,
-that's a separate codebase running on the microcontroller side (bottle
-validation, motor control, sending `POST /grant`). This repo is the
-Orange Pi side only.
+**The payment hardware is up to you.** This software does not care whether
+customers pay with plastic bottles, coins, tokens or a card reader. It
+exposes one HTTP endpoint, `POST /grant`, which your hardware calls when it
+has validated a payment. Everything else — what a payment is called, what
+it is worth, and what the portal says to customers — is configured by the
+operator at first run.
 
-## What's in this folder
+Runs on any Linux box that can host an access point. It was built for an
+Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
+
+## What is in this folder
 
 ```
-ecowifi-vendo-fastapi/
-├── main.py                  FastAPI app: portal, /claim, /grant, admin routes
-├── database.py               SQLite: sessions, transactions, vouchers, rates
-├── network_service.py        Local nftables control + MAC resolution via ARP
-├── session_worker.py         Background thread: expires sessions, revokes access
-├── requirements.txt
-├── .env.example
-├── hostapd.conf               Template: broadcasts the open "EcoWifi" SSID
-├── dnsmasq.conf                Template: DHCP + DNS-hijack for the captive portal
-├── setup_nftables.sh           Template: default-drop firewall + portal redirect
-├── systemd/
-│   ├── ecowifi-app.service      Runs the FastAPI app via uvicorn
-│   └── ecowifi-nftables.service  Applies the firewall ruleset at boot
-└── install.sh                  Ties everything together -- run this on the Pi
+├── main.py               FastAPI app: portal, /claim, /grant, admin API
+├── database.py           SQLite: sessions, payment queue, transactions,
+│                          vouchers, rates, settings, admin credentials
+├── auth.py               Password hashing, sessions, brute-force lockout
+├── network_service.py    nftables control + MAC resolution via ARP
+├── system_monitor.py     Gateway health checks for the dashboard
+├── session_worker.py     Background thread: revokes expired sessions
+├── templates/            portal, admin dashboard, login, first-run setup
+├── hostapd.conf          Template: broadcasts the open SSID
+├── dnsmasq.conf          Template: DHCP + DNS hijack for the portal
+├── nginx.conf            Template: portal on HTTP, admin forced to HTTPS
+├── setup_nftables.sh     Template: default-drop firewall + portal redirect
+├── systemd/              Units for the app and the firewall ruleset
+└── install.sh            Interactive installer — run this on the gateway
 ```
 
-## Important: this only runs on Linux
+## Installing
 
-`network_service.py` calls `nft` and `ip neigh` directly. These don't
-exist on Windows. Everything here must be installed and run **on the
-Orange Pi itself** (or a Linux VM) -- not your Windows PC.
+Run on the gateway machine itself, as root:
 
-## Installing (on the Orange Pi)
+```
+git clone https://github.com/Smee-code/EcoWifi-Vendo.git
+cd EcoWifi-Vendo
+sudo bash install.sh
+```
 
-1. Copy this whole folder onto the Orange Pi (via `git`, `scp`, or a
-   USB drive).
-2. Plug in your USB WiFi adapter and USB-LAN adapter, then run
-   `ip link show` to find their interface names (something like
-   `wlx...` for WiFi, `enx...` for LAN).
-3. Run the installer:
+It asks for your interface names, the SSID to broadcast, the AP IP address,
+the app port, and an admin username and password. It then installs
+hostapd, dnsmasq, nftables and nginx, generates a self-signed certificate,
+fills in every config template, and starts everything on boot.
 
-   ```
-   cd ecowifi-vendo-fastapi
-   sudo bash install.sh
-   ```
+Afterwards:
 
-   It will ask for:
-   - Your AP interface name (USB WiFi adapter)
-   - Your WAN interface name (USB-LAN adapter)
-   - The static IP to give the AP interface (e.g. `192.168.50.1`)
-   - The port to run the FastAPI app on (e.g. `8000`)
+- Customer portal — `http://<AP_IP>/`
+- Admin dashboard — `https://<AP_IP>/admin`
 
-   Then it installs `hostapd`, `dnsmasq`, `nftables`, sets up a Python
-   virtual environment, fills in all the config file placeholders,
-   installs the systemd services, and starts everything.
+## First run
 
-4. Check everything came up:
+Two setup steps must be completed before the machine can grant anything.
 
-   ```
-   systemctl status hostapd dnsmasq ecowifi-nftables ecowifi-app
-   ```
+1. **Admin credentials.** If you did not set them during install, open
+   `/admin/setup`. It asks for a one-time token that is printed to the
+   log — `journalctl -u ecowifi-app | grep -A2 "NO ADMIN"`. The token
+   exists because the SSID is open: without it, the first customer to
+   reach the setup page could claim the machine.
 
-5. From a phone, connect to the "EcoWifi" WiFi network. You should be
-   redirected to the captive portal automatically.
+2. **Payment rates.** No rate is shipped. Define your own payment trigger
+   and what it earns, e.g. `coin` = 20 minutes, or `bottle` = 30 minutes.
+   Until at least one rate exists, `/claim` and `/grant` return 503 and the
+   portal tells customers the machine is not set up.
 
-## The claim -> grant flow (recap)
+## Connecting your payment hardware
 
-1. Client connects to "EcoWifi", gets redirected to the portal
-2. Taps "Claim WiFi" -> `POST /claim` -- this app resolves their MAC
-   from the ARP table and marks it `pending`
-3. They insert a bottle. The ESP32 validates it (metal/weight/size)
-4. On success, the ESP32 calls `POST /grant` on this app
-5. This app grants the oldest pending claim: credits time based on the
-   `bottle` rate, adds the MAC to nftables' `granted_macs` set, logs a
-   transaction
-6. `session_worker.py` checks once a minute and revokes access when
-   time runs out
+Your hardware needs to make one HTTP call. When it has validated a payment:
+
+```
+POST /grant
+{"payment_method": "coin"}
+```
+
+`payment_method` names one of your configured rates. It may be omitted when
+only one rate exists. The oldest waiting customer is credited.
+
+Optionally, report health so the dashboard can show it:
+
+```
+POST /device/heartbeat
+{"firmware": "coinbox-v2", "hopper_coins": 412, "accepting": true}
+```
+
+Every field is optional and freeform. Two keys carry meaning: `accepting`
+(false stops the portal asking customers to pay) and `message` (shown to
+customers while that is true). Everything else is displayed on the
+dashboard as-is, so any hardware can report whatever it has.
+
+## How a session works
+
+1. Customer connects to the SSID; dnsmasq leases an IP and hijacks DNS
+2. nftables redirects their web traffic to the portal
+3. They tap the pay button — `POST /claim` queues their MAC
+4. They pay at the machine; your hardware validates it
+5. Your hardware calls `POST /grant`
+6. The app credits time, adds their MAC to the nftables allow set, and logs
+   the transaction
+7. `session_worker.py` revokes access when the time runs out
+
+Session time is stored as an expiry timestamp rather than a counter, so the
+countdown stays correct across restarts and supports pause/resume.
+
+## Admin dashboard
+
+System status (payment device liveness, whatever it reports, gateway
+services, disk, and whether the firewall agrees with the database),
+sessions with pause/resume/revoke, a permanent MAC blocklist, vouchers,
+rates, portal wording, backup and restore, and credential changes.
+
+## Security notes
+
+- The admin dashboard is forced onto HTTPS with a self-signed certificate.
+  Your browser warns once; click through. It defeats passive sniffing on
+  the open WiFi, which is the actual threat. Replace the certificate in
+  `/etc/ssl/ecowifi/` if this ever gets a real domain name.
+- The customer portal stays on plain HTTP deliberately. Phones probe a
+  known URL to detect a captive portal, and that probe fails behind a
+  self-signed certificate — customers would never see the sign-in page.
+- Admin login and voucher redemption are both rate-limited per IP.
+- `POST /grant` is **not** authenticated. Anyone who can reach the gateway
+  can call it and credit the oldest waiting claim. If your hardware can
+  hold a secret, put it behind a shared token before deploying somewhere
+  that matters.
+
+## What is not here
+
+- **Payment hardware firmware** — a separate codebase, whatever your
+  hardware is.
+- **Log rotation** — the SQLite database and the journal grow unbounded.
+  Add rotation before long-term unattended deployment.
 
 ## Attribution
 
 The `hostapd.conf` / `dnsmasq.conf` patterns were adapted from
 [Splines/raspi-captive-portal](https://github.com/Splines/raspi-captive-portal)
-(MIT licensed), rewritten for nftables, USB-LAN WAN + USB WiFi AP, and
-a FastAPI portal instead of the original's Node.js server.
-
-## What's still not here
-
-- **HTTPS** -- the admin password crosses the LAN in the clear, since
-  the portal is served over plain HTTP. On an open SSID anyone running a
-  packet capture can read it. Putting nginx in front with a self-signed
-  certificate (spec section 3.3 already calls for nginx) would close this.
-- **ESP32 firmware** -- separate codebase, not part of this repo.
-- **Log rotation / monitoring** -- the SQLite database and systemd
-  journal will grow unbounded over time; add rotation before long-term
-  unattended deployment.
+(MIT licensed), rewritten for nftables, a USB-Ethernet WAN and a USB WiFi
+AP, and a FastAPI portal instead of the original Node.js server.

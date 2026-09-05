@@ -14,6 +14,7 @@
   h1 { margin: 0 0 4px; font-size: 1.15rem; }
   p.sub { margin: 0 0 22px; color: #7d93a8; font-size: .82rem; }
   label { display: block; font-size: .78rem; color: #9db2c6; margin-bottom: 6px; }
+  input + label { margin-top: 14px; }
   input { width: 100%; background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
           border-radius: 6px; padding: 10px; font-size: .95rem; }
   button { width: 100%; margin-top: 16px; padding: 11px; border: 0; border-radius: 6px;
@@ -32,17 +33,23 @@
     <p class="sub">Operator sign-in</p>
 
     <form onsubmit="signIn(event)">
-      <label for="password">Password</label>
-      <input type="password" id="password" autocomplete="current-password" autofocus>
+      <label for="username">Username</label>
+      <input type="text" id="username" autocomplete="username" autocapitalize="none"
+             spellcheck="false" autofocus>
+
+      <label for="password" style="margin-top:14px">Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+
       <button type="submit" id="btn">Sign in</button>
     </form>
 
     <p id="msg"></p>
 
     <p class="hint">
-      Forgot it? On the Orange Pi, stop the app, delete the admin password
-      row from the database, and restart &mdash; a new one-time setup token
-      is printed to <code>journalctl -u ecowifi-app</code>.
+      Forgot them? On the Orange Pi, stop the app, delete the
+      <code>admin_password_hash</code> row from the settings table, and
+      restart &mdash; a new one-time setup token is printed to
+      <code>journalctl -u ecowifi-app</code>.
     </p>
   </div>
 
@@ -58,7 +65,10 @@ async function signIn(e) {
     const res = await fetch('/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: document.getElementById('password').value })
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+      })
     });
     const data = await res.json().catch(() => ({}));
 

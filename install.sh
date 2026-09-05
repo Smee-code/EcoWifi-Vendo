@@ -22,6 +22,12 @@ echo
 
 read -p "AP interface (USB WiFi adapter, e.g. wlan1): " AP_INTERFACE
 read -p "WAN interface (USB-LAN adapter, e.g. eth1): " WAN_INTERFACE
+read -p "WiFi network name (SSID) to broadcast [EcoWifi]: " WIFI_SSID
+WIFI_SSID=${WIFI_SSID:-EcoWifi}
+if [ ${#WIFI_SSID} -gt 32 ]; then
+    echo "Error: an SSID cannot be longer than 32 characters."
+    exit 1
+fi
 read -p "Static IP to assign to the AP interface (e.g. 192.168.50.1): " AP_IP
 read -p "Port for the FastAPI portal (e.g. 8000): " PORTAL_PORT
 
@@ -29,6 +35,8 @@ read -p "Port for the FastAPI portal (e.g. 8000): " PORTAL_PORT
 # with no admin password. Leave it blank to use the first-run setup page
 # instead, which prints a one-time token to the journal.
 echo
+read -p "Admin username for the dashboard [admin]: " ADMIN_USERNAME
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 read -s -p "Admin password for the dashboard (blank = set it in a browser later): " ADMIN_PASSWORD
 echo
 if [ -n "$ADMIN_PASSWORD" ]; then
@@ -73,14 +81,15 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo
 echo "Installing system packages..."
 apt-get update
-apt-get install -y hostapd dnsmasq nftables python3 python3-venv python3-pip
+apt-get install -y hostapd dnsmasq nftables nginx openssl python3 python3-venv python3-pip
 
 echo "Stopping hostapd/dnsmasq while we configure (avoids port conflicts)..."
 systemctl stop hostapd 2>/dev/null || true
 systemctl stop dnsmasq 2>/dev/null || true
 
 echo "Writing /etc/hostapd/hostapd.conf..."
-sed "s/<AP_INTERFACE>/$AP_INTERFACE/" "$APP_DIR/hostapd.conf" > /etc/hostapd/hostapd.conf
+sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<WIFI_SSID>/$WIFI_SSID/" \
+    "$APP_DIR/hostapd.conf" > /etc/hostapd/hostapd.conf
 
 echo "Writing /etc/dnsmasq.conf..."
 sed -e "s/<AP_INTERFACE>/$AP_INTERFACE/" -e "s/<AP_IP_ADDRESS>/$AP_IP/" -e "s/<DHCP_RANGE_START>/$DHCP_RANGE_START/" -e "s/<DHCP_RANGE_END>/$DHCP_RANGE_END/" \
@@ -116,11 +125,35 @@ NFT_SET=granted_macs
 EOF
 
 if [ -n "$ADMIN_PASSWORD" ]; then
+    echo "ECOWIFI_ADMIN_USERNAME=$ADMIN_USERNAME" >> "$APP_DIR/.env"
     echo "ECOWIFI_ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$APP_DIR/.env"
 fi
 
 # The .env now holds a password, so keep it off other accounts on the box.
 chmod 600 "$APP_DIR/.env"
+
+echo "Generating a self-signed certificate for the admin dashboard..."
+# The admin password would otherwise cross an OPEN WiFi network in the
+# clear, readable by anyone in range running a packet capture.
+mkdir -p /etc/ssl/ecowifi
+if [ ! -f /etc/ssl/ecowifi/ecowifi.key ]; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -keyout /etc/ssl/ecowifi/ecowifi.key \
+        -out /etc/ssl/ecowifi/ecowifi.crt \
+        -subj "/CN=$AP_IP" \
+        -addext "subjectAltName=IP:$AP_IP" 2>/dev/null
+    chmod 600 /etc/ssl/ecowifi/ecowifi.key
+    echo "  certificate created for $AP_IP (valid 10 years)"
+else
+    echo "  certificate already exists, keeping it"
+fi
+
+echo "Writing nginx configuration..."
+sed "s/<PORTAL_PORT>/$PORTAL_PORT/" "$APP_DIR/nginx.conf" \
+    > /etc/nginx/sites-available/ecowifi
+ln -sf /etc/nginx/sites-available/ecowifi /etc/nginx/sites-enabled/ecowifi
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
 
 echo "Installing systemd services..."
 sed "s#<APP_DIR>#$APP_DIR#g; s/<PORTAL_PORT>/$PORTAL_PORT/g" \
@@ -130,23 +163,36 @@ cp "$APP_DIR/systemd/ecowifi-nftables.service" /etc/systemd/system/ecowifi-nftab
 systemctl daemon-reload
 
 echo "Enabling and starting all services..."
-systemctl enable hostapd dnsmasq ecowifi-nftables ecowifi-app
+systemctl enable hostapd dnsmasq nginx ecowifi-nftables ecowifi-app
 systemctl restart hostapd
 systemctl restart dnsmasq
 systemctl restart ecowifi-nftables
 systemctl restart ecowifi-app
+systemctl restart nginx
 
 echo
 echo "Done. Check status with:"
-echo "  systemctl status hostapd dnsmasq ecowifi-nftables ecowifi-app"
+echo "  systemctl status hostapd dnsmasq nginx ecowifi-nftables ecowifi-app"
 echo
 echo "If hostapd fails to start, check: journalctl -u hostapd -n 50"
 echo
 
+echo "SSID broadcasting: $WIFI_SSID"
+echo "Customer portal:   http://$AP_IP/"
+echo "Admin dashboard:   https://$AP_IP/admin"
+echo
+echo "The admin certificate is self-signed, so your browser warns once."
+echo "That is expected -- it still stops the password being readable by"
+echo "anyone sniffing the open WiFi."
+echo
+
 if [ -z "$ADMIN_PASSWORD" ]; then
-    echo "No admin password was set. Open http://$AP_IP:$PORTAL_PORT/admin/setup"
-    echo "and enter the one-time token from:"
+    echo "No admin password was set. Open https://$AP_IP/admin/setup and enter"
+    echo "the one-time token from:"
     echo "  journalctl -u ecowifi-app | grep -A2 'NO ADMIN'"
 else
-    echo "Admin dashboard: http://$AP_IP:$PORTAL_PORT/admin"
+    echo "Sign in as: $ADMIN_USERNAME"
 fi
+echo
+echo "Then set what one payment is worth -- the machine cannot grant any"
+echo "time until at least one rate exists."

@@ -41,6 +41,10 @@ nft flush chain inet fw4 input
 nft flush chain inet fw4 forward
 
 nft add rule inet fw4 forward iifname "$AP_INTERFACE" ether saddr @granted_macs accept
+
+# Un-granted clients must still reach the portal and the admin dashboard on
+# this machine. The input chain accepts by default, so 80/443 are already
+# reachable -- this rule only documents the dependency.
 nft add rule inet fw4 forward ct state established,related accept
 
 # ---- nat table: masquerade granted clients out through WAN ----
@@ -59,6 +63,8 @@ nft flush chain inet nat postrouting
 nft flush chain inet nat prerouting
 
 nft add rule inet nat postrouting oifname "$WAN_INTERFACE" masquerade
-nft add rule inet nat prerouting iifname "$AP_INTERFACE" ether saddr != @granted_macs tcp dport 80 redirect to :"$PORTAL_PORT"
+# Redirect to nginx on :80, which proxies the portal. The app itself
+# listens on loopback only.
+nft add rule inet nat prerouting iifname "$AP_INTERFACE" ether saddr != @granted_macs tcp dport 80 redirect to :80
 
 echo "Base ruleset applied. Verify with: nft list ruleset"
