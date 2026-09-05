@@ -250,10 +250,12 @@
     .side .brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 16px; }
     .tiles { display: none; }
     .scrim { display: none; }
-    /* On desktop the panels sit in the main column instead of a sheet. */
+    /* On desktop the panels sit in the content column instead of sliding
+       up as a sheet. Being a grid child is what keeps them aligned with
+       the session view they replace. */
     .sheet { position: static; transform: none; max-width: none; max-height: none;
              background: transparent; border-radius: 0; padding: 0; box-shadow: none;
-             animation: riseIn .28s ease both; }
+             min-width: 0; animation: riseIn .28s ease both; }
     .sheet-grab { display: none; }
   }
 </style>
@@ -339,45 +341,46 @@
 
     </main>
 
+      <div class="sheet" id="sheet" style="display:none">
+        <div class="sheet-grab">
+          <span class="bar2"></span>
+          <button class="iconbtn" onclick="go('home')" aria-label="Close">&times;</button>
+        </div>
+
+        <div id="panel-rates" style="display:none;flex-direction:column;gap:14px;min-width:0">
+          <div class="card">
+            <div class="head">
+              <h2>WiFi rates</h2>
+              <p id="ratesLead">Each payment adds time to your session.</p>
+            </div>
+            <div id="ratesRows"></div>
+          </div>
+          <div class="hintbox" id="ratesHint"></div>
+        </div>
+
+        <div id="panel-voucher" style="display:none">
+          <div class="vcard">
+            <h2>Redeem voucher</h2>
+            <p class="sub">Codes are issued by the machine operator.</p>
+            <input id="voucherCode" placeholder="A1B2C3D4" autocomplete="off" spellcheck="false"
+                   onkeydown="if(event.key==='Enter')redeem()">
+            <button id="voucherBtn" onclick="redeem()">Redeem code</button>
+            <p class="vmsg" id="voucherMsg" style="display:none"></p>
+          </div>
+        </div>
+
+        <div id="panel-info" style="display:none;flex-direction:column;gap:14px;min-width:0">
+          <div class="card">
+            <div class="head"><h2>Connection</h2></div>
+            <div id="connRows"></div>
+          </div>
+        </div>
+
   </div>
 </div>
 
 <div class="scrim" id="scrim" style="display:none" onclick="go('home')"></div>
 
-<div class="sheet" id="sheet" style="display:none">
-  <div class="sheet-grab">
-    <span class="bar2"></span>
-    <button class="iconbtn" onclick="go('home')" aria-label="Close">&times;</button>
-  </div>
-
-  <div id="panel-rates" style="display:none;flex-direction:column;gap:14px;min-width:0">
-    <div class="card">
-      <div class="head">
-        <h2>WiFi rates</h2>
-        <p id="ratesLead">Each payment adds time to your session.</p>
-      </div>
-      <div id="ratesRows"></div>
-    </div>
-    <div class="hintbox" id="ratesHint"></div>
-  </div>
-
-  <div id="panel-voucher" style="display:none">
-    <div class="vcard">
-      <h2>Redeem voucher</h2>
-      <p class="sub">Codes are issued by the machine operator.</p>
-      <input id="voucherCode" placeholder="A1B2C3D4" autocomplete="off" spellcheck="false"
-             onkeydown="if(event.key==='Enter')redeem()">
-      <button id="voucherBtn" onclick="redeem()">Redeem code</button>
-      <p class="vmsg" id="voucherMsg" style="display:none"></p>
-    </div>
-  </div>
-
-  <div id="panel-info" style="display:none;flex-direction:column;gap:14px;min-width:0">
-    <div class="card">
-      <div class="head"><h2>Connection</h2></div>
-      <div id="connRows"></div>
-    </div>
-  </div>
 </div>
 
 <div class="modal-wrap" id="modal" style="display:none">
@@ -530,16 +533,33 @@ function renderRates() {
   // Show the tiers the operator actually configured rather than invented
   // multiples: advertising a bulk bonus at the wrong price would make the
   // machine look like it short-changed people.
+  // effective_minutes is what the machine would really give for that
+  // quantity. It can beat the tier's own figure, because a tier priced
+  // worse than the base rate is never chosen -- advertising the tier
+  // figure would quote a price the machine will not charge.
   const rows = allRates.map(r => {
     const base = allRates.find(
       b => b.payment_method === r.payment_method && b.quantity === 1);
-    const bonus = base && r.quantity > 1 && r.minutes > base.minutes * r.quantity;
+    const actual = (r.effective_minutes !== undefined) ? r.effective_minutes : r.minutes;
+    const linear = base ? base.minutes * r.quantity : null;
     return {
       label: r.quantity + ' ' + r.payment_method + (r.quantity === 1 ? '' : 's'),
-      time: fmt(r.minutes),
-      note: bonus ? 'bonus - beats ' + fmt(base.minutes * r.quantity) : ''
+      time: fmt(actual),
+      note: (linear !== null && actual > linear) ? 'bonus - beats ' + fmt(linear) : ''
     };
   });
+
+  // Tiers that never apply would otherwise appear as duplicate rows at
+  // the same price, which reads as a mistake to a customer.
+  const seen = new Set();
+  const unique = rows.filter(r => {
+    const key = r.label + '|' + r.time;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  rows.length = 0;
+  unique.forEach(r => rows.push(r));
 
   if (!rows.length) rows.push({ label: 'Not set up yet', time: '--', note: '' });
 

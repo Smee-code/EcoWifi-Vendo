@@ -559,10 +559,15 @@ async function load() {
       let value = '<span class="note">base rate</span>';
       if (r.quantity > 1 && linear !== null) {
         const diff = r.minutes - linear;
-        value = diff > 0
-          ? '<span style="color:#6ee39b">+' + diff + ' min bonus</span>'
-          : (diff < 0 ? '<span style="color:#e08585">' + diff + ' min vs base</span>'
-                      : '<span class="note">same as base</span>');
+        if (diff > 0) {
+          value = '<span style="color:#6ee39b">+' + diff + ' min bonus</span>';
+        } else {
+          // Worth less than buying singles, so the solver will never pick
+          // it. Say so plainly -- a tier that silently does nothing looks
+          // like the pricing is broken.
+          value = '<span style="color:#e08585">never applies</span>' +
+                  '<span class="note"> &mdash; ' + linear + ' min is cheaper</span>';
+        }
       }
       // Removing the base tier removes the whole trigger, so label it honestly.
       const isBase = r.quantity === 1;

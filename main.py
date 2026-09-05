@@ -965,7 +965,16 @@ async def unban_device(payload: dict, _=Depends(require_admin)):
 
 @app.get("/rates")
 async def list_rates():
-    return database.get_all_rates()
+    """Every tier, plus what each quantity would ACTUALLY earn.
+
+    A tier priced worse than the base rate is never chosen by the solver,
+    so publishing its own figure would quote customers a price the machine
+    will not charge. effective_minutes is what they would really get."""
+    rates = database.get_all_rates()
+    for row in rates:
+        row['effective_minutes'] = database.calculate_minutes(
+            row['payment_method'], row['quantity'])
+    return rates
 
 
 @app.post("/rates")
