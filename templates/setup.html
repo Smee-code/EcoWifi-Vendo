@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EcoWifi Admin &mdash; First-run setup</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center;
+         justify-content: center; background: #101820; color: #e6edf3;
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .card { width: 100%; max-width: 420px; background: #16212c; padding: 30px 26px;
+          border: 1px solid #223040; border-radius: 10px; margin: 16px; }
+  h1 { margin: 0 0 4px; font-size: 1.15rem; }
+  p.sub { margin: 0 0 18px; color: #7d93a8; font-size: .82rem; }
+  .warn { background: #4a2c14; color: #ffcf99; font-size: .78rem; padding: 11px 13px;
+          border-radius: 6px; margin-bottom: 20px; line-height: 1.5; }
+  label { display: block; font-size: .78rem; color: #9db2c6; margin: 14px 0 6px; }
+  input { width: 100%; background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
+          border-radius: 6px; padding: 10px; font-size: .95rem; }
+  button { width: 100%; margin-top: 20px; padding: 11px; border: 0; border-radius: 6px;
+           background: #226e43; color: #fff; font-size: .95rem; font-weight: 600;
+           cursor: pointer; }
+  button:hover:enabled { background: #2b8a54; }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  #msg { margin: 14px 0 0; font-size: .82rem; min-height: 1.1em; color: #e08585; }
+  code { background: #0f1923; padding: 2px 6px; border-radius: 3px; color: #8fd6ff;
+         font-size: .78rem; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Set up the admin password</h1>
+    <p class="sub">This machine has no operator password yet.</p>
+
+    <div class="warn">
+      The WiFi network is open, so anyone nearby can reach this page. To
+      prove you are the operator, enter the one-time setup token printed in
+      the server log.<br><br>
+      On the Orange Pi: <code>journalctl -u ecowifi-app | grep -A2 "NO ADMIN"</code>
+    </div>
+
+    <form onsubmit="createPassword(event)">
+      <label for="token">Setup token (from the server log)</label>
+      <input id="token" autocomplete="off" autofocus>
+
+      <label for="password">New admin password (at least 8 characters)</label>
+      <input type="password" id="password" autocomplete="new-password">
+
+      <label for="confirm">Confirm password</label>
+      <input type="password" id="confirm" autocomplete="new-password">
+
+      <button type="submit" id="btn">Create password and sign in</button>
+    </form>
+
+    <p id="msg"></p>
+  </div>
+
+<script>
+async function createPassword(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn');
+  const msg = document.getElementById('msg');
+  btn.disabled = true;
+  msg.innerText = '';
+
+  try {
+    const res = await fetch('/admin/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        setup_token: document.getElementById('token').value,
+        password: document.getElementById('password').value,
+        confirm: document.getElementById('confirm').value
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok) { window.location = '/admin'; return; }
+    msg.innerText = data.detail || 'Could not create the password.';
+  } catch (err) {
+    msg.innerText = 'Could not reach the server.';
+  }
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>

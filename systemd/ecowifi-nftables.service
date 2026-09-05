@@ -1,0 +1,12 @@
+[Unit]
+Description=EcoWifi Vendo nftables base ruleset
+After=network.target
+Before=ecowifi-app.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ecowifi-nftables.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

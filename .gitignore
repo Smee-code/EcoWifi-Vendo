@@ -1,0 +1,28 @@
+# Runtime database -- holds the admin password hash and salt, live login
+# tokens, and the MAC address of every device that has ever connected.
+# Never commit this.
+ecowifi.db
+ecowifi.db-journal
+ecowifi.db-wal
+ecowifi.db-shm
+ecowifi.db.pre-restore-*
+*.sqlite
+*.sqlite3
+
+# Real configuration, including ECOWIFI_ADMIN_PASSWORD. Commit .env.example
+# instead, which carries the keys with no values.
+.env
+
+# Python virtual environment -- rebuilt by install.sh on the Orange Pi
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

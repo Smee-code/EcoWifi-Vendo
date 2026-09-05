@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EcoWifi Vendo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Design tokens from the EcoWifi Portal canvas. Fonts fall back to the
+     system stack, because the captive portal is reachable before the
+     customer has internet -- Google Fonts will not load for them. */
+  :root {
+    --ink:      #12261f;
+    --ink-mid:  #3d4d45;
+    --muted:    #6b7a72;
+    --muted-2:  #8b9a92;
+    --green:    #0e6b52;
+    --green-dk: #0a4f3c;
+    --lime:     #c9f24d;
+    --mint:     #eaf7ec;
+    --paper:    #e9ece6;
+    --line:     rgba(18,38,31,.09);
+    --ok-fg:    #1c6b4a;
+    --err-bg:   #fdecea;
+    --err-fg:   #a33a2c;
+    --display:  'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+    --body:     'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; justify-content: center;
+    padding: 24px 16px 40px; font-family: var(--body);
+    -webkit-font-smoothing: antialiased; color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(120% 55% at 50% 0%, rgba(14,107,82,.14) 0%, rgba(232,235,230,0) 65%),
+      radial-gradient(rgba(14,107,82,.07) 1px, transparent 1.2px);
+    background-size: auto, 18px 18px;
+  }
+  @keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(.85)} }
+  @keyframes riseIn   { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+  @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+  @keyframes popIn    { from{opacity:0;transform:translateY(14px) scale(.96)} to{opacity:1;transform:none} }
+  @keyframes sheetIn  { from{opacity:0;transform:translate(-50%,16px)} to{opacity:1;transform:translate(-50%,0)} }
+  @keyframes dropBottle { 0%{transform:translateY(-14px);opacity:.35} 55%{transform:translateY(4px);opacity:1} 100%{transform:translateY(-14px);opacity:.35} }
+  @keyframes glowRing { 0%,100%{box-shadow:0 0 0 0 rgba(201,242,77,.35)} 50%{box-shadow:0 0 0 18px rgba(201,242,77,0)} }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  .shell { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 16px; }
+  .grid  { display: grid; grid-template-columns: 1fr; align-items: start; gap: 20px; }
+
+  /* ---- mobile header ---- */
+  .mhead { display: flex; align-items: center; justify-content: space-between;
+           gap: 12px; padding: 2px 4px; }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 32px; height: 32px; flex: none; border-radius: 10px; background: var(--green);
+          display: flex; align-items: center; justify-content: center; color: var(--lime);
+          font: 800 16px var(--display); }
+  .wordmark { display: flex; flex-direction: column; line-height: 1.15; }
+  .wordmark b { font: 700 16px var(--display); letter-spacing: -.01em; }
+  .wordmark span { font: 500 11px var(--body); color: var(--muted); letter-spacing: .02em; }
+  .iconbtn { width: 34px; height: 34px; flex: none; border: 1px solid rgba(18,38,31,.12);
+             background: rgba(255,255,255,.7); border-radius: 11px; color: #4a5a52;
+             font: 600 13px var(--body); cursor: pointer; display: flex;
+             align-items: center; justify-content: center; }
+  .iconbtn:hover { background: #fff; color: var(--green); }
+
+  /* ---- desktop sidebar ---- */
+  .side { display: none; }
+  .side .navbtn { width: 100%; cursor: pointer; border: none; border-radius: 14px;
+                  padding: 11px 12px; display: flex; align-items: center; gap: 11px;
+                  background: transparent; color: var(--ink-mid); font-family: var(--body);
+                  text-align: left; transition: background .18s ease; }
+  .side .navbtn:hover { background: rgba(14,107,82,.08); }
+  .side .navbtn .chip { width: 3px; height: 26px; flex: none; border-radius: 99px;
+                        background: rgba(14,107,82,.22); }
+  .side .navbtn .lbl { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .side .navbtn .lbl b { font-size: 13.5px; font-weight: 600; letter-spacing: -.005em; }
+  .side .navbtn .lbl span { font-size: 10.5px; font-weight: 500; color: var(--muted-2); }
+  .side .navbtn.on { background: var(--green); color: #fff; }
+  .side .navbtn.on .chip { background: var(--lime); }
+  .side .navbtn.on .lbl span { color: rgba(255,255,255,.7); }
+
+  /* ---- hero ---- */
+  .hero { border-radius: 26px; padding: 26px 22px 22px; color: #fff; position: relative;
+          overflow: hidden; background: linear-gradient(165deg,#0f7a5c 0%,#0b5340 55%,#093f31 100%);
+          box-shadow: 0 18px 40px -22px rgba(9,63,49,.85); }
+  .hero .orb { position: absolute; inset: auto -60px -90px auto; width: 220px; height: 220px;
+               border-radius: 50%; background: radial-gradient(circle,rgba(201,242,77,.16),transparent 70%); }
+  .hero .state { position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+  .hero .dot { width: 8px; height: 8px; flex: none; border-radius: 50%;
+               animation: pulseDot 1.8s ease-in-out infinite; }
+  .hero .state span { font: 600 11.5px var(--body); letter-spacing: .14em;
+                      text-transform: uppercase; color: rgba(255,255,255,.82); }
+  .clock { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px;
+           font-family: var(--display); line-height: .85; }
+  .clock .num { font-size: clamp(48px,13vw,68px); font-weight: 800; letter-spacing: -.03em;
+                font-variant-numeric: tabular-nums; }
+  .clock .num.dim { color: rgba(255,255,255,.62); }
+  .clock .unit { font-size: 15px; font-weight: 600; color: rgba(255,255,255,.6); padding: 0 8px 8px 3px; }
+  .clock .unit.last { color: rgba(255,255,255,.45); padding-right: 0; }
+  .bar { position: relative; margin-top: 18px; height: 4px; border-radius: 99px;
+         background: rgba(255,255,255,.16); overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 99px; background: var(--lime);
+           transition: width .6s ease; }
+  .meta { position: relative; display: flex; flex-wrap: wrap; gap: 8px;
+          justify-content: space-between; margin-top: 9px;
+          font: 500 11.5px var(--body); color: rgba(255,255,255,.6); }
+
+  /* ---- action cards ---- */
+  .actions { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 12px; }
+  .toggle { width: 100%; border: none; cursor: pointer; border-radius: 18px; padding: 17px 20px;
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            color: var(--ink); font-family: var(--body); background: var(--lime);
+            transition: transform .12s ease, filter .18s ease; }
+  .toggle:hover:enabled { filter: brightness(1.06); }
+  .toggle:active:enabled { transform: scale(.985); }
+  .toggle:disabled { opacity: .5; cursor: not-allowed; }
+  .toggle .txt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+                 text-align: left; min-width: 0; }
+  .toggle .txt b { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  .toggle .txt span { font-size: 11.5px; font-weight: 500; opacity: .72; }
+  .toggle .glyph { font-size: 18px; font-weight: 600; opacity: .8; }
+
+  .insert { width: 100%; cursor: pointer; border-radius: 18px; padding: 16px 20px;
+            display: flex; align-items: center; gap: 14px; background: #fff;
+            border: 1.5px dashed rgba(14,107,82,.35); font-family: var(--body);
+            text-align: left; transition: border-color .18s ease, background .18s ease; }
+  .insert:hover:enabled { border-color: var(--green); background: #f4faf5; }
+  .insert:disabled { opacity: .55; cursor: not-allowed; }
+  .insert .badge { width: 44px; height: 44px; flex: none; border-radius: 14px; background: var(--mint);
+                   display: flex; align-items: center; justify-content: center;
+                   animation: glowRing 2.6s ease-out infinite; }
+  .bottle { width: 13px; height: 21px; border-radius: 3px 3px 5px 5px;
+            background: linear-gradient(180deg,#bfe3f5,#8fcbe8); border-top: 4px solid var(--green); }
+  .insert .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .insert .txt b { font-size: 15.5px; font-weight: 700; letter-spacing: -.01em; }
+  .insert .txt span { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+
+  /* ---- status strips ---- */
+  .strip { border-radius: 14px; padding: 12px 14px; display: flex; align-items: flex-start;
+           gap: 10px; font: 500 12.5px/1.4 var(--body); background: var(--mint); color: var(--ok-fg); }
+  .strip i { width: 6px; height: 6px; flex: none; margin-top: 5px; border-radius: 50%;
+             background: currentColor; }
+  .strip.err { background: var(--err-bg); color: var(--err-fg); }
+  .strip.warn { background: #fdf4e3; color: #8a5b00; }
+
+  /* ---- quick tiles (mobile) ---- */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 12px; }
+  .tile { cursor: pointer; border: 1px solid rgba(18,38,31,.1); background: #fff; border-radius: 18px;
+          padding: 16px 15px; display: flex; flex-direction: column; align-items: flex-start;
+          gap: 8px; font-family: var(--body); text-align: left;
+          transition: box-shadow .18s ease, transform .12s ease; }
+  .tile:hover { box-shadow: 0 10px 24px -18px rgba(9,63,49,.7); }
+  .tile:active { transform: scale(.985); }
+  .tile .ic { width: 34px; height: 34px; border-radius: 11px; background: var(--mint);
+              display: flex; align-items: center; justify-content: center;
+              color: #4a5a52; font-size: 15px; font-weight: 700; }
+  .tile b { font-size: 14px; font-weight: 700; }
+  .tile span { font-size: 11px; font-weight: 500; color: var(--muted); line-height: 1.35; }
+
+  .footnote { margin: 2px 4px 0; font: 500 11.5px/1.5 var(--body); color: #7b8a82; }
+
+  /* ---- panels (rates / voucher / connection) ---- */
+  .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(9,42,33,.55);
+           backdrop-filter: blur(6px); animation: fadeIn .2s ease both; }
+  .sheet { position: fixed; z-index: 41; left: 50%; transform: translateX(-50%); width: 100%;
+           max-width: 480px; bottom: 0; max-height: 88vh; overflow: auto; background: #f2f5f0;
+           border-radius: 26px 26px 0 0; padding: 14px 16px 26px; display: grid;
+           grid-template-columns: 1fr; gap: 14px;
+           box-shadow: 0 -20px 60px -20px rgba(9,63,49,.5);
+           animation: sheetIn .26s cubic-bezier(.2,.9,.3,1) both; }
+  .sheet-grab { display: flex; align-items: center; justify-content: space-between;
+                gap: 12px; padding: 2px 4px 2px 6px; }
+  .sheet-grab .bar2 { width: 38px; height: 4px; border-radius: 99px; background: rgba(18,38,31,.14); }
+  .card { border-radius: 24px; background: #fff; border: 1px solid var(--line); overflow: hidden; }
+  .card .head { padding: 20px 20px 14px; }
+  .card h2 { margin: 0; font: 700 21px var(--display); letter-spacing: -.02em; }
+  .card .head p { margin: 5px 0 0; font: 500 12px var(--body); color: var(--muted); }
+  .rowitem { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+             padding: 15px 20px; border-top: 1px solid rgba(18,38,31,.07); }
+  .rowitem .k { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .rowitem .k b { font: 600 14.5px var(--body); }
+  .rowitem .k span { font: 500 11px var(--body); color: var(--muted-2); }
+  .rowitem .v { font: 700 14.5px var(--display); color: var(--green); white-space: nowrap; }
+  .rowitem.kv .k { font: 500 12.5px var(--body); color: var(--muted); }
+  .rowitem.kv .v { font: 600 12.5px ui-monospace, Menlo, Consolas, monospace; color: var(--ink);
+                   word-break: break-all; text-align: right; }
+  .hintbox { border-radius: 18px; padding: 15px 17px; background: var(--mint);
+             font: 500 12px/1.5 var(--body); color: #1c4d3c; }
+
+  .vcard { border-radius: 24px; background: #fff; border: 1px solid var(--line);
+           padding: 22px 20px; min-width: 0; }
+  .vcard p.sub { margin: 5px 0 18px; font: 500 12px/1.5 var(--body); color: var(--muted); }
+  .vcard input { width: 100%; padding: 15px 16px; border-radius: 14px;
+                 border: 1.5px solid rgba(18,38,31,.14); font: 600 17px var(--display);
+                 letter-spacing: .12em; color: var(--ink); outline: none;
+                 text-transform: uppercase; background: #fbfcfa; }
+  .vcard input:focus { border-color: var(--green); background: #fff; }
+  .vcard button { margin-top: 12px; width: 100%; cursor: pointer; border: none; border-radius: 14px;
+                  padding: 16px; background: var(--green); color: #fff; font: 700 15px var(--body);
+                  transition: filter .18s ease; }
+  .vcard button:hover:enabled { filter: brightness(1.08); }
+  .vcard button:disabled { opacity: .6; cursor: not-allowed; }
+  .vmsg { margin: 12px 0 0; font: 500 12.5px/1.45 var(--body); color: var(--ok-fg); }
+  .vmsg.err { color: var(--err-fg); }
+
+  /* ---- insert modal ---- */
+  .modal-wrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;
+                justify-content: center; padding: 20px; background: rgba(9,42,33,.55);
+                backdrop-filter: blur(6px); animation: fadeIn .2s ease both; }
+  .modal { width: 100%; max-width: 380px; border-radius: 28px; background: #fff;
+           padding: 28px 24px 22px; box-shadow: 0 40px 80px -30px rgba(9,63,49,.6);
+           text-align: center; animation: popIn .26s cubic-bezier(.2,.9,.3,1) both; }
+  .pillbadge { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px;
+               border-radius: 99px; background: var(--mint); font: 600 10.5px var(--body);
+               letter-spacing: .12em; text-transform: uppercase; color: #1c6b4a; }
+  .modal h2 { margin: 14px 0 4px; font: 700 24px var(--display); letter-spacing: -.02em; }
+  .modal p.lead { margin: 0 auto; max-width: 270px; font: 500 12.5px/1.5 var(--body); color: var(--muted); }
+  .ring { position: relative; width: 150px; height: 150px; margin: 22px auto 18px; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring .inner { position: absolute; inset: 0; display: flex; flex-direction: column;
+                 align-items: center; justify-content: center; gap: 1px; }
+  .ring .inner b { font: 800 40px var(--display); letter-spacing: -.03em; line-height: 1;
+                   font-variant-numeric: tabular-nums; }
+  .ring .inner span { font: 600 10px var(--body); letter-spacing: .16em;
+                      text-transform: uppercase; color: var(--muted-2); }
+  .waiting { display: flex; align-items: center; justify-content: center; gap: 9px;
+             padding: 11px 14px; border-radius: 14px; background: #f6f9f5;
+             font: 500 12px var(--body); color: #4a5a52; }
+  .waiting .bottle { animation: dropBottle 1.6s ease-in-out infinite; width: 14px; height: 22px; }
+  .modal .cancel { margin-top: 14px; width: 100%; cursor: pointer;
+                   border: 1px solid rgba(18,38,31,.14); background: #fff; border-radius: 14px;
+                   padding: 15px; font: 600 14px var(--body); color: #4a5a52;
+                   transition: background .18s ease, color .18s ease; }
+  .modal .cancel:hover { background: #f2f4f1; color: var(--ink); }
+
+  @media (min-width: 1000px) {
+    .shell { max-width: 1080px; }
+    .grid { grid-template-columns: 246px minmax(0,1fr); }
+    .mhead { display: none; }
+    .side { display: flex; position: sticky; top: 24px; flex-direction: column; gap: 6px;
+            padding: 16px 14px; border-radius: 24px; background: rgba(255,255,255,.72);
+            border: 1px solid rgba(18,38,31,.07); backdrop-filter: blur(8px); }
+    .side .brand { display: flex; align-items: center; gap: 10px; padding: 4px 6px 16px; }
+    .tiles { display: none; }
+    .scrim { display: none; }
+    /* On desktop the panels sit in the main column instead of a sheet. */
+    .sheet { position: static; transform: none; max-width: none; max-height: none;
+             background: transparent; border-radius: 0; padding: 0; box-shadow: none;
+             animation: riseIn .28s ease both; }
+    .sheet-grab { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="mhead">
+    <div class="logo">
+      <div class="mark">E</div>
+      <div class="wordmark"><b>EcoWifi Vendo</b><span>Recycle a bottle. Get online.</span></div>
+    </div>
+    <button class="iconbtn" onclick="go('info')" aria-label="Connection details">i</button>
+  </div>
+
+  <div class="grid">
+
+    <aside class="side">
+      <div class="brand">
+        <div class="mark" style="width:34px;height:34px;border-radius:11px;font-size:17px">E</div>
+        <div class="wordmark"><b>EcoWifi Vendo</b><span>Recycle a bottle. Get online.</span></div>
+      </div>
+      <button class="navbtn on" data-nav="home" onclick="go('home')">
+        <span class="chip"></span><span class="lbl"><b>Session</b><span>Time and bottles</span></span>
+      </button>
+      <button class="navbtn" data-nav="rates" onclick="go('rates')">
+        <span class="chip"></span><span class="lbl"><b>WiFi rates</b><span>Time per bottle</span></span>
+      </button>
+      <button class="navbtn" data-nav="voucher" onclick="go('voucher')">
+        <span class="chip"></span><span class="lbl"><b>Voucher</b><span>Redeem a code</span></span>
+      </button>
+      <button class="navbtn" data-nav="info" onclick="go('info')">
+        <span class="chip"></span><span class="lbl"><b>Connection</b><span>IP, MAC, limits</span></span>
+      </button>
+      <div class="hintbox" style="margin-top:14px;padding:12px 13px;border-radius:14px;font-size:10.5px">
+        Only empty plastic bottles are accepted. Metal cans are returned automatically.
+      </div>
+    </aside>
+
+    <main id="home" style="display:flex;flex-direction:column;gap:14px;min-width:0;animation:riseIn .28s ease both">
+
+      <section class="hero">
+        <div class="orb"></div>
+        <div class="state">
+          <span class="dot" id="dot"></span>
+          <span id="stateLabel">Not connected</span>
+        </div>
+        <div class="clock">
+          <span class="num" id="hh">00</span><span class="unit">HR</span>
+          <span class="num" id="mm">00</span><span class="unit">MIN</span>
+          <span class="num dim" id="ss">00</span><span class="unit last">SEC</span>
+        </div>
+        <div class="bar"><i id="bar" style="width:0%"></i></div>
+        <div class="meta"><span id="bottlesLine">0 bottles inserted</span><span id="capLine"></span></div>
+      </section>
+
+      <div class="actions">
+        <button class="toggle" id="toggleBtn" onclick="toggleTime()" disabled>
+          <span class="txt"><b id="toggleTitle">Resume time</b><span id="toggleSub">Continue surfing now</span></span>
+          <span class="glyph" id="toggleGlyph">&#9654;</span>
+        </button>
+        <button class="insert" id="insertBtn" onclick="openInsert()">
+          <span class="badge"><span class="bottle"></span></span>
+          <span class="txt"><b id="insertTitle">Insert plastic bottle</b><span id="insertSub">Adds time to your session</span></span>
+        </button>
+      </div>
+
+      <div class="strip" id="machineStrip" style="display:none"><i></i><span id="machineMsg"></span></div>
+      <div class="strip" id="statusStrip" style="display:none"><i></i><span id="statusMsg"></span></div>
+
+      <div class="tiles">
+        <button class="tile" onclick="go('rates')">
+          <span class="ic"><span class="bottle" style="width:11px;height:17px;border-top-width:3px"></span></span>
+          <b>WiFi rates</b><span>How much time each bottle earns</span>
+        </button>
+        <button class="tile" onclick="go('voucher')">
+          <span class="ic" style="background:#f2f4f1">#</span>
+          <b>Redeem voucher</b><span>Enter a code to top up your time</span>
+        </button>
+      </div>
+
+      <p class="footnote">Only empty plastic bottles are accepted. Metal cans and other objects are returned automatically.</p>
+
+    </main>
+
+  </div>
+</div>
+
+<div class="scrim" id="scrim" style="display:none" onclick="go('home')"></div>
+
+<div class="sheet" id="sheet" style="display:none">
+  <div class="sheet-grab">
+    <span class="bar2"></span>
+    <button class="iconbtn" onclick="go('home')" aria-label="Close">&times;</button>
+  </div>
+
+  <div id="panel-rates" style="display:none;flex-direction:column;gap:14px;min-width:0">
+    <div class="card">
+      <div class="head">
+        <h2>WiFi rates</h2>
+        <p id="ratesLead">Every bottle adds time to your session.</p>
+      </div>
+      <div id="ratesRows"></div>
+    </div>
+    <div class="hintbox" id="ratesHint">Bottles must be empty, uncapped and no larger than 1.5 L.</div>
+  </div>
+
+  <div id="panel-voucher" style="display:none">
+    <div class="vcard">
+      <h2>Redeem voucher</h2>
+      <p class="sub">Codes are issued by the machine operator.</p>
+      <input id="voucherCode" placeholder="A1B2C3D4" autocomplete="off" spellcheck="false"
+             onkeydown="if(event.key==='Enter')redeem()">
+      <button id="voucherBtn" onclick="redeem()">Redeem code</button>
+      <p class="vmsg" id="voucherMsg" style="display:none"></p>
+    </div>
+  </div>
+
+  <div id="panel-info" style="display:none;flex-direction:column;gap:14px;min-width:0">
+    <div class="card">
+      <div class="head"><h2>Connection</h2></div>
+      <div id="connRows"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="modal" style="display:none">
+  <div class="modal">
+    <span class="pillbadge">Bay open</span>
+    <h2>Insert your bottle</h2>
+    <p class="lead">Drop one empty plastic bottle into the slot. We will credit your device as soon as the sensor validates it.</p>
+
+    <div class="ring">
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="54" fill="none" stroke="#eaf1ec" stroke-width="9"></circle>
+        <circle id="ringArc" cx="60" cy="60" r="54" fill="none" stroke="#0e6b52" stroke-width="9"
+                stroke-linecap="round" stroke-dasharray="339.292" stroke-dashoffset="0"
+                style="transition:stroke-dashoffset 1s linear"></circle>
+      </svg>
+      <div class="inner"><b id="modalSecs">30</b><span id="modalUnit">seconds</span></div>
+    </div>
+
+    <div class="waiting"><span class="bottle"></span><span id="waitingMsg">Waiting for the sensor to detect a bottle</span></div>
+    <button class="cancel" onclick="cancelInsert()">Cancel</button>
+  </div>
+</div>
+
+<script>
+const RING = 2 * Math.PI * 54;
+
+let remaining = 0;         // seconds, ticked locally between syncs
+let status = 'blocked';
+let pendingClaim = false;
+let bottles = 0;
+let capSeconds = 0;
+let bottleMinutes = 30;
+let screen = 'home';
+let modalOpen = false;
+let modalSecs = 30;
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtHours(secs) {
+  if (!secs) return 'no limit';
+  const h = secs / 3600;
+  return (Number.isInteger(h) ? h : h.toFixed(1)) + ' hr';
+}
+
+// ---- navigation ----
+function go(name) {
+  screen = name;
+  const desktop = window.matchMedia('(min-width: 1000px)').matches;
+
+  document.querySelectorAll('.navbtn').forEach(b =>
+    b.classList.toggle('on', b.dataset.nav === name));
+
+  ['rates','voucher','info'].forEach(p => {
+    const el = document.getElementById('panel-' + p);
+    el.style.display = (p === name) ? (p === 'voucher' ? 'block' : 'flex') : 'none';
+  });
+
+  const open = name !== 'home';
+  document.getElementById('sheet').style.display = open ? 'grid' : 'none';
+  document.getElementById('scrim').style.display = (open && !desktop) ? 'block' : 'none';
+  // On desktop the panels replace the session view; on mobile they slide
+  // over it as a sheet, so home stays mounted underneath.
+  document.getElementById('home').style.display = (open && desktop) ? 'none' : 'flex';
+
+  if (name === 'rates') renderRates();
+  if (name === 'info') renderConn();
+}
+
+// ---- rendering ----
+function paint() {
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  document.getElementById('hh').innerText = pad(h);
+  document.getElementById('mm').innerText = pad(m);
+  document.getElementById('ss').innerText = pad(s);
+
+  const dot = document.getElementById('dot');
+  const label = document.getElementById('stateLabel');
+  if (status === 'active') {
+    dot.style.background = 'var(--lime)';
+    label.innerText = 'Online — time running';
+  } else if (status === 'paused') {
+    dot.style.background = '#f0c14b';
+    label.innerText = 'Time paused';
+  } else {
+    dot.style.background = remaining > 0 ? '#f0c14b' : '#ff8f6b';
+    label.innerText = bottles > 0 ? 'Time used up' : 'Not connected';
+  }
+
+  const pct = capSeconds ? Math.min(100, (remaining / capSeconds) * 100) : (remaining > 0 ? 100 : 0);
+  document.getElementById('bar').style.width = pct.toFixed(1) + '%';
+  document.getElementById('bottlesLine').innerText =
+    bottles + (bottles === 1 ? ' bottle inserted' : ' bottles inserted');
+  document.getElementById('capLine').innerText = capSeconds ? 'of ' + fmtHours(capSeconds) + ' max' : '';
+
+  const tBtn = document.getElementById('toggleBtn');
+  const running = status === 'active';
+  tBtn.disabled = !(running || status === 'paused');
+  tBtn.style.background = running ? '#f2f4f1' : 'var(--lime)';
+  document.getElementById('toggleTitle').innerText = running ? 'Pause time' : 'Resume time';
+  document.getElementById('toggleSub').innerText =
+    running ? 'Bank the rest for later' : (status === 'paused' ? 'Continue surfing now' : 'No time banked yet');
+  document.getElementById('toggleGlyph').innerHTML = running ? '&#8214;' : '&#9654;';
+
+  // Stays clickable while a claim is queued: once the bay window closes
+  // this is the only route back to cancelling, and reopening is safe
+  // because /claim is idempotent per device.
+  const iBtn = document.getElementById('insertBtn');
+  iBtn.disabled = false;
+  document.getElementById('insertTitle').innerText =
+    pendingClaim ? 'Waiting for your bottle' : 'Insert plastic bottle';
+  document.getElementById('insertSub').innerText = pendingClaim
+    ? 'Tap to reopen the bay or cancel'
+    : 'Adds ' + bottleMinutes + ' minutes to your session';
+}
+
+function strip(id, msg, kind) {
+  const box = document.getElementById(id);
+  if (!msg) { box.style.display = 'none'; return; }
+  box.className = 'strip' + (kind ? ' ' + kind : '');
+  box.querySelector('span').innerText = msg;
+  box.style.display = 'flex';
+}
+
+function say(msg, kind) { strip('statusStrip', msg, kind); }
+
+function renderRates() {
+  // Tiers are derived from the live bottle rate and the real session cap,
+  // so this panel cannot drift from what the machine actually gives you.
+  const rows = [];
+  const mk = (n) => {
+    const mins = n * bottleMinutes;
+    const label = n + (n === 1 ? ' bottle' : ' bottles');
+    const time = mins >= 60
+      ? (Number.isInteger(mins / 60) ? (mins / 60) + ' hr' : (mins / 60).toFixed(1) + ' hr')
+      : mins + ' min';
+    return { label, time, note: '' };
+  };
+  rows.push({ ...mk(1), note: '500 ml – 1.5 L, empty' });
+  rows.push(mk(2));
+  rows.push(mk(4));
+  if (capSeconds && bottleMinutes) {
+    const capBottles = Math.floor(capSeconds / 60 / bottleMinutes);
+    if (capBottles > 4) rows.push({ ...mk(capBottles), note: 'Session maximum' });
+  }
+
+  document.getElementById('ratesLead').innerText =
+    'Every bottle adds ' + bottleMinutes + ' minutes to your session.';
+  document.getElementById('ratesHint').innerText = capSeconds
+    ? 'Bottles must be empty, uncapped and no larger than 1.5 L. Sessions cap at ' + fmtHours(capSeconds) + '.'
+    : 'Bottles must be empty, uncapped and no larger than 1.5 L.';
+
+  document.getElementById('ratesRows').innerHTML = rows.map(r =>
+    '<div class="rowitem"><span class="k"><b>' + esc(r.label) + '</b>' +
+    (r.note ? '<span>' + esc(r.note) + '</span>' : '') + '</span>' +
+    '<span class="v">' + esc(r.time) + '</span></div>'
+  ).join('');
+}
+
+let lastConn = { ip: '--', mac: '--' };
+
+function renderConn() {
+  const rows = [
+    ['IP address', lastConn.ip || '--'],
+    ['MAC address', lastConn.mac || '--'],
+    ['Bottles inserted', String(bottles)],
+    ['Session cap', capSeconds ? fmtHours(capSeconds) : 'no limit'],
+  ];
+  document.getElementById('connRows').innerHTML = rows.map(([k, v]) =>
+    '<div class="rowitem kv"><span class="k">' + esc(k) + '</span>' +
+    '<span class="v">' + esc(v) + '</span></div>'
+  ).join('');
+}
+
+// ---- data ----
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  return { ok: res.ok, data: await res.json().catch(() => ({})) };
+}
+
+async function sync() {
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
+
+    lastConn = { ip: data.ip, mac: data.mac_address };
+    capSeconds = data.session_cap_seconds || 0;
+
+    const wasPending = pendingClaim;
+
+    if (data.session) {
+      remaining = data.session.remaining_seconds;
+      status = data.session.status;
+      pendingClaim = !!data.session.pending_claim;
+      bottles = data.session.bottles_inserted || 0;
+    } else {
+      remaining = 0; status = 'blocked'; pendingClaim = false; bottles = 0;
+    }
+
+    // The claim closed while the modal was up: the ESP32 validated a
+    // bottle and credited us.
+    if (modalOpen && wasPending && !pendingClaim) {
+      closeModal();
+      say('Bottle validated. Time added to your session.', '');
+    }
+
+    paintMachine(data.machine);
+    paint();
+    if (screen === 'info') renderConn();
+  } catch (e) { /* keep the last known state on screen */ }
+}
+
+async function loadRates() {
+  try {
+    const rates = await (await fetch('/rates')).json();
+    const bottle = rates.find(r => r.payment_method === 'bottle');
+    if (bottle) bottleMinutes = bottle.minutes_per_unit;
+  } catch (e) { /* keep the default */ }
+}
+
+function paintMachine(machine) {
+  if (!machine || !machine.ever_seen) { strip('machineStrip', null); return; }
+  if (machine.bin_full) {
+    strip('machineStrip', 'The bottle bin is full. Please come back once it has been emptied.', 'warn');
+  } else if (!machine.detector_online) {
+    strip('machineStrip', 'The bottle detector is offline right now. Vouchers still work.', 'warn');
+  } else {
+    strip('machineStrip', null);
+  }
+}
+
+// ---- actions ----
+async function toggleTime() {
+  const running = status === 'active';
+  const { ok, data } = await post(running ? '/pause' : '/resume');
+  if (!ok) { say(data.detail || 'Could not change your time.', 'err'); return; }
+  say(running ? 'Time paused. Your balance is saved.' : 'You are online. Enjoy.', '');
+  sync();
+}
+
+async function openInsert() {
+  const { ok, data } = await post('/claim');
+  if (!ok) { say(data.detail || 'Could not identify your device.', 'err'); return; }
+  pendingClaim = true;
+  modalOpen = true;
+  modalSecs = 30;
+  document.getElementById('modalUnit').innerText = 'seconds';
+  document.getElementById('waitingMsg').innerText = 'Waiting for the sensor to detect a bottle';
+  document.getElementById('modal').style.display = 'flex';
+  paintModal();
+  paint();
+}
+
+function paintModal() {
+  document.getElementById('modalSecs').innerText = modalSecs > 0 ? pad(modalSecs) : '--';
+  const arc = document.getElementById('ringArc');
+  arc.setAttribute('stroke-dashoffset', String(RING * (1 - Math.max(0, modalSecs) / 30)));
+}
+
+function closeModal() {
+  modalOpen = false;
+  document.getElementById('modal').style.display = 'none';
+}
+
+async function cancelInsert() {
+  closeModal();
+  await post('/claim/cancel');
+  say('Insertion cancelled. No bottle was taken.', 'err');
+  sync();
+}
+
+async function redeem() {
+  const input = document.getElementById('voucherCode');
+  const btn = document.getElementById('voucherBtn');
+  const msg = document.getElementById('voucherMsg');
+  const code = input.value.trim();
+
+  if (!code) {
+    msg.className = 'vmsg err'; msg.innerText = 'Enter a voucher code first.';
+    msg.style.display = 'block'; return;
+  }
+
+  btn.disabled = true;
+  const { ok, data } = await post('/vouchers/redeem', { code });
+  btn.disabled = false;
+
+  msg.style.display = 'block';
+  if (!ok) {
+    msg.className = 'vmsg err';
+    msg.innerText = data.detail || 'That code is not valid. Check it and try again.';
+    return;
+  }
+
+  input.value = '';
+  msg.className = 'vmsg';
+  msg.innerText = data.capped
+    ? 'Code accepted, but your session is at its ' + fmtHours(capSeconds) + ' cap, so only ' +
+      data.minutes_credited + ' minutes were added.'
+    : 'Code accepted — ' + data.minutes_credited + ' minutes added.';
+  sync();
+}
+
+// ---- loop ----
+setInterval(() => {
+  if (status === 'active' && remaining > 0) {
+    remaining -= 1;
+    paint();
+    if (remaining === 0) sync();
+  }
+  if (modalOpen && modalSecs > 0) {
+    modalSecs -= 1;
+    paintModal();
+
+    if (modalSecs === 0) {
+      // The bay window is up, so get out of the customer's way. The CLAIM
+      // is deliberately left open: cancelling it here would mean a bottle
+      // dropped a second later gets swallowed and credited to nobody.
+      // They stay queued, and the session view keeps showing that.
+      closeModal();
+      say('Still waiting for your bottle. Your place in the queue is held ' +
+          'until it is validated, or you cancel.', 'warn');
+    }
+  }
+}, 1000);
+
+loadRates().then(() => { sync(); go('home'); });
+setInterval(sync, 5000);
+window.addEventListener('resize', () => go(screen));
+</script>
+</body>
+</html>

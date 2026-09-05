@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EcoWifi Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #101820; color: #e6edf3; display: flex;
+         min-height: 100vh;
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+  /* ---- sidebar ---- */
+  .sidebar { width: 214px; flex: 0 0 214px; background: #0c141c;
+             border-right: 1px solid #1d2836; display: flex; flex-direction: column;
+             position: sticky; top: 0; height: 100vh; }
+  .brand { padding: 18px 18px 14px; border-bottom: 1px solid #1d2836; }
+  .brand h1 { margin: 0; font-size: .98rem; letter-spacing: -.01em; }
+  .brand p { margin: 3px 0 0; font-size: .68rem; color: #6b8299;
+             text-transform: uppercase; letter-spacing: .06em; }
+
+  nav { padding: 10px 0; flex: 1; overflow-y: auto; }
+  nav a { display: flex; align-items: center; gap: 10px; padding: 9px 18px;
+          color: #9db2c6; text-decoration: none; font-size: .85rem;
+          border-left: 3px solid transparent; cursor: pointer; }
+  nav a:hover { background: #131e29; color: #e6edf3; }
+  nav a.active { background: #16232f; color: #fff; border-left-color: #4fd18b; }
+  nav a .ic { width: 16px; text-align: center; opacity: .85; }
+  nav a .badge { margin-left: auto; background: #7d2b2b; color: #fff;
+                 font-size: .62rem; font-weight: 700; padding: 1px 6px;
+                 border-radius: 10px; }
+
+  .side-foot { border-top: 1px solid #1d2836; padding: 12px 18px; font-size: .7rem;
+               color: #6b8299; }
+  .side-foot button { width: 100%; background: #2f4054; border: 0; color: #cfe0ee;
+                      padding: 7px; border-radius: 5px; font-size: .76rem;
+                      cursor: pointer; }
+  .side-foot button:hover { background: #3b5069; }
+
+  /* ---- main ---- */
+  .main { flex: 1; min-width: 0; }
+  .topbar { display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 22px; border-bottom: 1px solid #1d2836; background: #131d27;
+            position: sticky; top: 0; z-index: 5; gap: 12px; }
+  .topbar h2 { margin: 0; font-size: 1rem; }
+  .topbar .meta { font-size: .74rem; color: #7d93a8; }
+  .content { padding: 20px 22px 50px; max-width: 1150px; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+           gap: 10px; margin-bottom: 20px; }
+  .stat { background: #16212c; border: 1px solid #223040; border-radius: 8px;
+          padding: 14px; }
+  .stat .n { font-size: 1.6rem; font-weight: 700; color: #4fd18b;
+             font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: .7rem; color: #7d93a8; text-transform: uppercase;
+             letter-spacing: .04em; margin-top: 2px; }
+
+  section { background: #16212c; border: 1px solid #223040; border-radius: 8px;
+            margin-bottom: 18px; overflow: hidden; }
+  section h3 { margin: 0; font-size: .8rem; text-transform: uppercase;
+               letter-spacing: .05em; color: #9db2c6; padding: 12px 16px;
+               border-bottom: 1px solid #223040; background: #1b2836; }
+  .pad { padding: 14px 16px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th { text-align: left; padding: 9px 16px; color: #7d93a8; font-weight: 600;
+       border-bottom: 1px solid #223040; white-space: nowrap; }
+  td { padding: 9px 16px; border-bottom: 1px solid #1c2735; }
+  tr:last-child td { border-bottom: 0; }
+  td.mono { font-family: ui-monospace, Consolas, monospace; font-size: .76rem; }
+  .empty { padding: 16px; color: #6b8299; font-size: .82rem; }
+  .scroll { overflow-x: auto; }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 20px;
+          font-size: .68rem; font-weight: 700; text-transform: uppercase; }
+  .pill.active { background: #12401f; color: #6ee39b; }
+  .pill.paused { background: #43350f; color: #f0c96b; }
+  .pill.pending { background: #123a4a; color: #6bc6e6; }
+  .pill.blocked { background: #3a1a1a; color: #e08585; }
+
+  button.act { border: 0; border-radius: 5px; padding: 5px 10px; font-size: .75rem;
+               font-weight: 600; cursor: pointer; color: #fff; background: #2f4054;
+               margin-right: 4px; }
+  button.act:hover { background: #3b5069; }
+  button.act.danger { background: #7d2b2b; }
+  button.act.danger:hover { background: #983434; }
+  button.act.go { background: #226e43; }
+  button.act.go:hover { background: #2b8a54; }
+
+  input, select { background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
+                  border-radius: 5px; padding: 7px 9px; font-size: .82rem; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row label { font-size: .78rem; color: #9db2c6; }
+  code { background: #0f1923; padding: 1px 6px; border-radius: 4px;
+         font-size: .76rem; color: #8fd6ff; }
+  .note { font-size: .75rem; color: #7d93a8; line-height: 1.5; }
+
+  @media (max-width: 720px) {
+    body { flex-direction: column; }
+    .sidebar { width: 100%; flex: none; height: auto; position: static; }
+    nav { display: flex; overflow-x: auto; padding: 0; }
+    nav a { border-left: 0; border-bottom: 3px solid transparent; white-space: nowrap; }
+    nav a.active { border-left: 0; border-bottom-color: #4fd18b; }
+    nav a .badge { margin-left: 6px; }
+  }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand">
+    <h1>EcoWifi Vendo</h1>
+    <p>Admin</p>
+  </div>
+
+  <nav id="nav">
+    <a data-panel="overview" data-title="Overview" class="active"><span class="ic">&#9632;</span> Overview</a>
+    <a data-panel="sessions" data-title="Sessions"><span class="ic">&#9679;</span> Sessions <span class="badge" id="badgeSessions" style="display:none"></span></a>
+    <a data-panel="macs" data-title="MAC control"><span class="ic">&#8856;</span> MAC control</a>
+    <a data-panel="vouchers" data-title="Vouchers"><span class="ic">&#9635;</span> Vouchers</a>
+    <a data-panel="rates" data-title="Rates"><span class="ic">&#8986;</span> Rates</a>
+    <a data-panel="transactions" data-title="Transactions"><span class="ic">&#8801;</span> Transactions</a>
+    <a data-panel="backup" data-title="Backup"><span class="ic">&#8681;</span> Backup</a>
+    <a data-panel="settings" data-title="Settings"><span class="ic">&#9881;</span> Settings</a>
+  </nav>
+
+  <div class="side-foot">
+    <button onclick="signOut()">Sign out</button>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <h2 id="panelTitle">Overview</h2>
+    <span class="meta">refreshed <span id="refreshed">--</span></span>
+  </div>
+
+  <div class="content">
+
+    <div class="panel active" data-panel="overview">
+      <div class="stats" id="stats"></div>
+      <section>
+        <h3>System status</h3>
+        <div class="scroll" id="statusWrap"></div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="sessions">
+      <section>
+        <h3>Connected devices</h3>
+        <div class="scroll" id="sessionsWrap"></div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="macs">
+      <section>
+        <h3>Block a device</h3>
+        <div class="pad row">
+          <label>MAC</label>
+          <input id="banMac" placeholder="AA:BB:CC:DD:EE:FF" size="18">
+          <label>Reason</label>
+          <input id="banReason" placeholder="gaming the sensor" size="22">
+          <button class="act danger" onclick="banMac()">Block device</button>
+        </div>
+        <p class="note pad" style="padding-top:0">
+          A blocked device cannot claim, be granted a bottle, redeem a voucher
+          or resume banked time. This is different from Revoke, which only
+          ends the current session.
+        </p>
+      </section>
+      <section>
+        <h3>Blocked devices</h3>
+        <div class="scroll" id="blocklistWrap"></div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="vouchers">
+      <section>
+        <h3>Generate</h3>
+        <div class="pad row">
+          <label>Minutes</label>
+          <input id="voucherMinutes" type="number" min="1" value="30" size="6">
+          <button class="act go" onclick="makeVoucher()">Generate voucher</button>
+          <span id="voucherMsg" style="font-size:.8rem;color:#4fd18b"></span>
+        </div>
+      </section>
+      <section>
+        <h3>Issued vouchers</h3>
+        <div class="scroll" id="vouchersWrap"></div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="rates">
+      <section>
+        <h3>Current rates</h3>
+        <div class="scroll" id="ratesWrap"></div>
+        <div class="pad row">
+          <label>Method</label>
+          <input id="rateMethod" placeholder="bottle" size="10">
+          <label>Minutes per unit</label>
+          <input id="rateMinutes" type="number" min="1" placeholder="30" size="6">
+          <button class="act go" onclick="saveRate()">Save rate</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="transactions">
+      <section>
+        <h3>Recent transactions</h3>
+        <div class="scroll" id="txWrap"></div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="backup">
+      <section>
+        <h3>Backup &amp; restore</h3>
+        <div class="pad">
+          <div class="row">
+            <button class="act go" onclick="downloadBackup()">Download backup</button>
+            <input type="file" id="restoreFile" accept=".db,application/octet-stream">
+            <button class="act danger" onclick="restoreBackup()">Restore from file</button>
+          </div>
+          <p class="note" style="margin:12px 0 0">
+            Restoring replaces every session, transaction and voucher with the
+            contents of the uploaded file. The current database is saved
+            alongside it first, the firewall is re-synced afterwards, and your
+            admin password is kept as it is now (not taken from the backup).
+          </p>
+          <p id="backupMsg" style="font-size:.8rem;margin:8px 0 0"></p>
+        </div>
+      </section>
+    </div>
+
+    <div class="panel" data-panel="settings">
+      <section>
+        <h3>Change admin password</h3>
+        <div class="pad">
+          <div class="row">
+            <input type="password" id="pwCurrent" placeholder="Current password" size="20">
+            <input type="password" id="pwNew" placeholder="New password" size="20">
+            <input type="password" id="pwConfirm" placeholder="Confirm new password" size="20">
+            <button class="act go" onclick="changePassword()">Update password</button>
+          </div>
+          <p class="note" style="margin:12px 0 0">
+            Changing the password signs out every other browser that is
+            currently logged in. You will stay signed in here.
+          </p>
+          <p id="pwMsg" style="font-size:.8rem;margin:8px 0 0"></p>
+        </div>
+      </section>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ---- navigation ----
+document.getElementById('nav').addEventListener('click', (e) => {
+  const link = e.target.closest('a[data-panel]');
+  if (!link) return;
+  showPanel(link.dataset.panel);
+});
+
+function showPanel(name) {
+  document.querySelectorAll('nav a[data-panel]').forEach(a =>
+    a.classList.toggle('active', a.dataset.panel === name));
+  document.querySelectorAll('.panel').forEach(p =>
+    p.classList.toggle('active', p.dataset.panel === name));
+
+  const link = document.querySelector('nav a[data-panel="' + name + '"]');
+  document.getElementById('panelTitle').innerText =
+    link ? link.dataset.title : name;
+
+  // Guard against re-entry: assigning location.hash fires hashchange,
+  // which calls straight back into showPanel.
+  if (location.hash.slice(1) !== name) location.hash = name;
+}
+
+// ---- helpers ----
+function fmtDuration(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function fmtTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString();
+}
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// A 401 means the session expired -- bounce to the login page rather than
+// leaving a dashboard full of stale numbers on screen.
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (res.status === 401) { window.location = '/admin/login'; throw new Error('unauthenticated'); }
+  return res.json();
+}
+
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  if (res.status === 401) { window.location = '/admin/login'; throw new Error('unauthenticated'); }
+  return { ok: res.ok, data: await res.json().catch(() => ({})) };
+}
+
+function dot(state) {
+  const colors = { ok: '#4fd18b', warn: '#f0c96b', bad: '#e08585', unknown: '#6b8299' };
+  return '<span style="color:' + colors[state] + '">&#9679;</span> ';
+}
+
+// ---- rendering ----
+function renderSystemStatus(sys) {
+  const d = sys.detection_side;
+  const g = sys.gateway;
+  const f = sys.firewall;
+
+  const detectorState = !d.last_seen ? 'unknown' : (d.online ? 'ok' : 'bad');
+  const detectorText = d.last_seen
+    ? (d.online ? 'Online' : 'OFFLINE') + ' (last heartbeat ' + d.seconds_since_seen + 's ago)'
+    : 'Never reported in - ESP32 not connected yet';
+
+  const rows = [
+    ['Bottle detector (ESP32)', detectorState, detectorText],
+    ['Bin', d.bin_full ? 'bad' : (d.last_seen ? 'ok' : 'unknown'),
+      d.last_seen ? (d.bin_full ? 'FULL - empty it, the machine has stopped accepting bottles'
+                                : 'Not full' + (d.bin_distance_cm ? ' (' + d.bin_distance_cm + ' cm clear)' : ''))
+                  : 'No reading yet'],
+    ['Accepting bottles', d.accepting_bottles ? 'ok' : 'warn',
+      d.accepting_bottles ? 'Yes' : 'No - see above'],
+    ['Firmware', d.firmware ? 'ok' : 'unknown', d.firmware || 'not reported'],
+  ];
+
+  Object.entries(g.services).forEach(([name, state]) => {
+    const cls = state === 'active' ? 'ok' : (state === 'unavailable' ? 'unknown' : 'bad');
+    const text = state === 'unavailable' ? 'not checkable on ' + g.platform : state;
+    rows.push(['service: ' + name, cls, text]);
+  });
+
+  rows.push(['Firewall / database in sync', f.in_sync ? 'ok' : 'bad',
+    f.in_sync
+      ? f.granted_count + ' device(s) granted, matches the database'
+      : 'MISMATCH - ' + f.missing_from_firewall.length + ' missing from firewall, ' +
+        f.unexpected_in_firewall.length + ' unexpected in firewall']);
+
+  if (g.disk.available) {
+    rows.push(['Disk', g.disk.percent_used > 90 ? 'bad' : (g.disk.percent_used > 75 ? 'warn' : 'ok'),
+      g.disk.free_mb + ' MB free (' + g.disk.percent_used + '% used)']);
+  }
+  rows.push(['Database', 'ok', (g.database_kb === null ? 'unknown' : g.database_kb + ' KB')]);
+  rows.push(['App uptime', 'ok', fmtDuration(g.app_uptime_seconds)]);
+
+  let html = '<table><tbody>' + rows.map(([label, state, text]) =>
+    '<tr><td style="width:240px;color:#9db2c6">' + label + '</td><td>' +
+    dot(state) + esc(text) + '</td></tr>'
+  ).join('') + '</tbody></table>';
+
+  if (!f.in_sync) {
+    html += '<div class="pad"><button class="act go" onclick="resync()">Re-sync firewall with database</button></div>';
+  }
+  document.getElementById('statusWrap').innerHTML = html;
+}
+
+async function load() {
+  const [stats, sessions, rates, vouchers, tx, sys, blocklist] = await Promise.all([
+    getJSON('/admin/stats'), getJSON('/sessions'), getJSON('/rates'),
+    getJSON('/vouchers'), getJSON('/transactions'),
+    getJSON('/admin/system-status'), getJSON('/admin/blocklist')
+  ]);
+
+  document.getElementById('refreshed').innerText = new Date().toLocaleTimeString();
+
+  renderSystemStatus(sys);
+
+  const badge = document.getElementById('badgeSessions');
+  const live = stats.active_sessions + stats.paused_sessions;
+  badge.style.display = live ? 'inline-block' : 'none';
+  badge.style.background = '#12401f';
+  badge.style.color = '#6ee39b';
+  badge.innerText = live;
+
+  document.getElementById('stats').innerHTML = [
+    ['total_bottles', 'Bottles collected'],
+    ['total_minutes_granted', 'Minutes granted'],
+    ['active_sessions', 'Active now'],
+    ['paused_sessions', 'Paused'],
+    ['pending_claims', 'Awaiting bottle'],
+    ['known_devices', 'Known devices']
+  ].map(([k, label]) =>
+    '<div class="stat"><div class="n">' + stats[k] + '</div><div class="l">' + label + '</div></div>'
+  ).join('');
+
+  document.getElementById('sessionsWrap').innerHTML = sessions.length ? (
+    '<table><thead><tr><th>MAC</th><th>Status</th><th>Time left</th>' +
+    '<th>Bottles</th><th>Claimed</th><th>Actions</th></tr></thead><tbody>' +
+    sessions.map(s =>
+      '<tr><td class="mono">' + esc(s.mac_address) + '</td>' +
+      '<td><span class="pill ' + esc(s.status) + '">' + esc(s.status) + '</span>' +
+        (s.pending_claim ? ' <span class="pill pending">awaiting bottle</span>' : '') + '</td>' +
+      '<td class="mono">' + fmtDuration(s.remaining_seconds) + '</td>' +
+      '<td>' + (s.bottles_inserted || 0) + '</td>' +
+      '<td style="color:#7d93a8">' + fmtTime(s.claimed_at) + '</td>' +
+      '<td>' +
+        (s.status === 'active' ? '<button class="act" onclick="act(\'/pause\',\'' + esc(s.mac_address) + '\')">Pause</button>' : '') +
+        (s.status === 'paused' ? '<button class="act go" onclick="act(\'/resume\',\'' + esc(s.mac_address) + '\')">Resume</button>' : '') +
+        (s.status !== 'blocked' ? '<button class="act danger" onclick="act(\'/block\',\'' + esc(s.mac_address) + '\')">Revoke</button>' : '') +
+        '<button class="act danger" onclick="banMac(\'' + esc(s.mac_address) + '\')">Block MAC</button>' +
+      '</td></tr>'
+    ).join('') + '</tbody></table>'
+  ) : '<div class="empty">No devices have connected yet.</div>';
+
+  document.getElementById('blocklistWrap').innerHTML = blocklist.length ? (
+    '<table><thead><tr><th>MAC</th><th>Reason</th><th>Blocked at</th><th></th></tr></thead><tbody>' +
+    blocklist.map(b =>
+      '<tr><td class="mono">' + esc(b.mac_address) + '</td>' +
+      '<td>' + esc(b.reason || '--') + '</td>' +
+      '<td style="color:#7d93a8">' + fmtTime(b.created_at) + '</td>' +
+      '<td><button class="act" onclick="unbanMac(\'' + esc(b.mac_address) + '\')">Unblock</button></td></tr>'
+    ).join('') + '</tbody></table>'
+  ) : '<div class="empty">No devices are blocked.</div>';
+
+  document.getElementById('ratesWrap').innerHTML = rates.length ? (
+    '<table><thead><tr><th>Payment method</th><th>Minutes per unit</th></tr></thead><tbody>' +
+    rates.map(r => '<tr><td>' + esc(r.payment_method) + '</td><td>' + r.minutes_per_unit + '</td></tr>').join('') +
+    '</tbody></table>'
+  ) : '<div class="empty">No rates configured.</div>';
+
+  document.getElementById('vouchersWrap').innerHTML = vouchers.length ? (
+    '<table><thead><tr><th>Code</th><th>Minutes</th><th>Status</th><th>Created</th></tr></thead><tbody>' +
+    vouchers.map(v =>
+      '<tr><td><code>' + esc(v.code) + '</code></td><td>' + v.minutes + '</td>' +
+      '<td>' + (v.redeemed ? '<span class="pill blocked">used</span>' : '<span class="pill active">unused</span>') + '</td>' +
+      '<td style="color:#7d93a8">' + fmtTime(v.created_at) + '</td></tr>'
+    ).join('') + '</tbody></table>'
+  ) : '<div class="empty">No vouchers generated yet.</div>';
+
+  document.getElementById('txWrap').innerHTML = tx.length ? (
+    '<table><thead><tr><th>When</th><th>MAC</th><th>Method</th><th>Qty</th><th>Minutes</th></tr></thead><tbody>' +
+    tx.map(t =>
+      '<tr><td style="color:#7d93a8">' + fmtTime(t.created_at) + '</td>' +
+      '<td class="mono">' + esc(t.mac_address) + '</td>' +
+      '<td>' + esc(t.payment_method) + '</td><td>' + t.quantity + '</td>' +
+      '<td>' + t.minutes_credited + '</td></tr>'
+    ).join('') + '</tbody></table>'
+  ) : '<div class="empty">No transactions yet.</div>';
+}
+
+// ---- actions ----
+async function act(url, mac) {
+  const { ok, data } = await post(url, { mac_address: mac });
+  if (!ok) alert(data.detail || 'Action failed');
+  load();
+}
+
+async function resync() {
+  const { ok, data } = await post('/admin/resync-firewall');
+  if (!ok) { alert(data.detail || 'Re-sync failed'); return; }
+  alert('Granted ' + data.granted.length + ', revoked ' + data.revoked.length);
+  load();
+}
+
+async function banMac(mac) {
+  const target = mac || document.getElementById('banMac').value.trim();
+  if (!target) { alert('Enter a MAC address to block.'); return; }
+  const reason = mac
+    ? prompt('Reason for blocking ' + target + '?')
+    : document.getElementById('banReason').value.trim();
+  if (reason === null) return;
+
+  const { ok, data } = await post('/admin/blocklist', { mac_address: target, reason: reason });
+  if (!ok) { alert(data.detail || 'Could not block that device'); return; }
+  document.getElementById('banMac').value = '';
+  document.getElementById('banReason').value = '';
+  load();
+}
+
+async function unbanMac(mac) {
+  const { ok, data } = await post('/admin/blocklist/remove', { mac_address: mac });
+  if (!ok) alert(data.detail || 'Could not unblock');
+  load();
+}
+
+async function saveRate() {
+  const method = document.getElementById('rateMethod').value.trim();
+  const minutes = document.getElementById('rateMinutes').value;
+  if (!method || !minutes) { alert('Enter both a method and minutes.'); return; }
+  const { ok, data } = await post('/rates', { payment_method: method, minutes_per_unit: Number(minutes) });
+  if (!ok) alert(data.detail || 'Could not save rate');
+  load();
+}
+
+async function makeVoucher() {
+  const minutes = Number(document.getElementById('voucherMinutes').value || 30);
+  const { ok, data } = await post('/vouchers', { minutes: minutes });
+  if (!ok) { alert(data.detail || 'Could not create voucher'); return; }
+  document.getElementById('voucherMsg').innerText = 'Created ' + data.code;
+  load();
+}
+
+function backupMsg(text, good) {
+  const el = document.getElementById('backupMsg');
+  el.innerText = text;
+  el.style.color = good ? '#4fd18b' : '#e08585';
+}
+
+async function downloadBackup() {
+  backupMsg('Preparing backup...', true);
+  try {
+    const res = await fetch('/admin/backup');
+    if (res.status === 401) { window.location = '/admin/login'; return; }
+    if (!res.ok) { backupMsg('Backup failed.', false); return; }
+
+    const blob = await res.blob();
+    const name = (res.headers.get('content-disposition') || '')
+      .match(/filename="?([^";]+)"?/)?.[1] || 'ecowifi-backup.db';
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    backupMsg('Downloaded ' + name, true);
+  } catch (e) {
+    backupMsg('Backup failed: ' + e.message, false);
+  }
+}
+
+async function restoreBackup() {
+  const input = document.getElementById('restoreFile');
+  const file = input.files[0];
+  if (!file) { backupMsg('Choose a backup file first.', false); return; }
+
+  if (!confirm('Replace the live database with ' + file.name + '?\n\n' +
+               'Every current session, transaction and voucher will be replaced.')) return;
+
+  backupMsg('Restoring...', true);
+  const res = await fetch('/admin/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file
+  });
+  if (res.status === 401) { window.location = '/admin/login'; return; }
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) { backupMsg('Restore refused: ' + (data.detail || 'unknown error'), false); return; }
+  backupMsg('Restored. ' + data.detail + ' Previous database saved as ' + data.previous_database, true);
+  input.value = '';
+  load();
+}
+
+async function changePassword() {
+  const el = document.getElementById('pwMsg');
+  const { ok, data } = await post('/admin/password', {
+    current_password: document.getElementById('pwCurrent').value,
+    new_password: document.getElementById('pwNew').value,
+    confirm: document.getElementById('pwConfirm').value
+  });
+
+  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.innerText = ok ? 'Password updated. Other sessions were signed out.'
+                    : (data.detail || 'Could not change the password.');
+  if (ok) {
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+  }
+}
+
+async function signOut() {
+  await post('/admin/logout');
+  window.location = '/admin/login';
+}
+
+// ---- boot ----
+function panelFromHash() {
+  const name = location.hash.slice(1);
+  if (name && document.querySelector('nav a[data-panel="' + name + '"]')) showPanel(name);
+}
+
+// Without this, arriving at /admin#vouchers from an already-open page (or
+// pressing Back) changes the address bar and nothing else.
+window.addEventListener('hashchange', panelFromHash);
+panelFromHash();
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>
