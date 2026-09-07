@@ -6,26 +6,107 @@
 <title>EcoWifi Admin &mdash; Sign in</title>
 <style>
   * { box-sizing: border-box; }
+  :root {
+    --bg: #101820;          --sidebar: #0c141c;      --topbar: #131d27;
+    --surface: #16212c;     --surface-2: #1b2836;
+    --line: #1d2836;        --line-soft: #1c2735;    --border: #223040;
+    --nav-hover: #131e29;   --nav-active: #16232f;
+    --text: #e6edf3;        --text-on-accent: #fff;
+    --muted: #9db2c6;       --muted-2: #7d93a8;      --faint: #6b8299;
+    --accent: #4fd18b;
+    --input-bg: #0f1923;    --input-border: #2b3c4e;
+    --btn: #2f4054;         --btn-hover: #3b5069;
+    --danger: #7d2b2b;      --danger-hover: #983434;
+    --go: #226e43;          --go-hover: #2b8a54;
+    --code-text: #8fd6ff;
+    --ok-bg: #12401f;       --ok-text: #6ee39b;
+    --warn-bg: #43350f;     --warn-text: #f0c96b;
+    --info-bg: #123a4a;     --info-text: #6bc6e6;
+    --bad-bg: #3a1a1a;      --bad-text: #e08585;
+    --notice-bg: #4a2c14;   --notice-text: #ffcf99;
+  }
+
+  /* Light theme. Not the dark values lightened -- text and pill colours are
+     darkened separately, because a shade that reads well on near-black is
+     usually unreadable on white. */
+  [data-theme="light"] {
+    --bg: #eef1f5;          --sidebar: #ffffff;      --topbar: #ffffff;
+    --surface: #ffffff;     --surface-2: #f3f6f9;
+    --line: #dde4ec;        --line-soft: #e8edf3;    --border: #dae1e9;
+    --nav-hover: #eef2f7;   --nav-active: #e6f4ec;
+    --text: #16212b;        --text-on-accent: #fff;
+    --muted: #46586a;       --muted-2: #5d7183;      --faint: #78899a;
+    --accent: #12784a;
+    --input-bg: #ffffff;    --input-border: #c3cfdb;
+    --btn: #46617d;         --btn-hover: #375068;
+    --danger: #a13a3a;      --danger-hover: #8a2f2f;
+    --go: #1d7a4a;          --go-hover: #17663d;
+    --code-text: #0a5f92;
+    --ok-bg: #d9f2e4;       --ok-text: #0f6039;
+    --warn-bg: #fbf0d7;     --warn-text: #7a5410;
+    --info-bg: #dbeefa;     --info-text: #0f5473;
+    --bad-bg: #fadedd;      --bad-text: #8f2f2f;
+    --notice-bg: #fbedda;   --notice-text: #7a4a12;
+  }
+
+  /* An operator who has never touched the toggle gets whatever their device
+     already asks for, rather than a dark dashboard on a bright screen. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef1f5;          --sidebar: #ffffff;      --topbar: #ffffff;
+      --surface: #ffffff;     --surface-2: #f3f6f9;
+      --line: #dde4ec;        --line-soft: #e8edf3;    --border: #dae1e9;
+      --nav-hover: #eef2f7;   --nav-active: #e6f4ec;
+      --text: #16212b;        --text-on-accent: #fff;
+      --muted: #46586a;       --muted-2: #5d7183;      --faint: #78899a;
+      --accent: #12784a;
+      --input-bg: #ffffff;    --input-border: #c3cfdb;
+      --btn: #46617d;         --btn-hover: #375068;
+      --danger: #a13a3a;      --danger-hover: #8a2f2f;
+      --go: #1d7a4a;          --go-hover: #17663d;
+      --code-text: #0a5f92;
+      --ok-bg: #d9f2e4;       --ok-text: #0f6039;
+      --warn-bg: #fbf0d7;     --warn-text: #7a5410;
+      --info-bg: #dbeefa;     --info-text: #0f5473;
+      --bad-bg: #fadedd;      --bad-text: #8f2f2f;
+      --notice-bg: #fbedda;   --notice-text: #7a4a12;
+    }
+  }
+
   body { margin: 0; min-height: 100vh; display: flex; align-items: center;
-         justify-content: center; background: #101820; color: #e6edf3;
+         justify-content: center; background: var(--bg); color: var(--text);
          font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .card { width: 100%; max-width: 360px; background: #16212c; padding: 30px 26px;
-          border: 1px solid #223040; border-radius: 10px; margin: 16px; }
+  .card { width: 100%; max-width: 360px; background: var(--surface); padding: 30px 26px;
+          border: 1px solid var(--border); border-radius: 10px; margin: 16px; }
   h1 { margin: 0 0 4px; font-size: 1.15rem; }
-  p.sub { margin: 0 0 22px; color: #7d93a8; font-size: .82rem; }
-  label { display: block; font-size: .78rem; color: #9db2c6; margin-bottom: 6px; }
+  p.sub { margin: 0 0 22px; color: var(--muted-2); font-size: .82rem; }
+  label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 6px; }
   input + label { margin-top: 14px; }
-  input { width: 100%; background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
+  input { width: 100%; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text);
           border-radius: 6px; padding: 10px; font-size: .95rem; }
   button { width: 100%; margin-top: 16px; padding: 11px; border: 0; border-radius: 6px;
-           background: #226e43; color: #fff; font-size: .95rem; font-weight: 600;
+           background: var(--go); color: var(--text-on-accent); font-size: .95rem; font-weight: 600;
            cursor: pointer; }
-  button:hover:enabled { background: #2b8a54; }
+  button:hover:enabled { background: var(--go-hover); }
   button:disabled { opacity: .6; cursor: not-allowed; }
-  #msg { margin: 14px 0 0; font-size: .82rem; min-height: 1.1em; color: #e08585; }
-  .hint { margin-top: 18px; font-size: .72rem; color: #5d7286; line-height: 1.5; }
-  code { background: #0f1923; padding: 1px 5px; border-radius: 3px; color: #8fd6ff; }
+  #msg { margin: 14px 0 0; font-size: .82rem; min-height: 1.1em; color: var(--bad-text); }
+  .hint { margin-top: 18px; font-size: .72rem; color: var(--faint); line-height: 1.5; }
+  code { background: var(--input-bg); padding: 1px 5px; border-radius: 3px; color: var(--code-text); }
 </style>
+<script>
+// Runs before the body paints. Reading the stored choice later, from the
+// main script, would show a flash of the wrong theme on every page load --
+// which is worst for the operator who chose light, since they get a
+// black flash each time.
+(function () {
+  try {
+    var saved = localStorage.getItem('ecowifi-admin-theme');
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+  } catch (e) { /* private mode or storage disabled: follow the device */ }
+})();
+</script>
 </head>
 <body>
   <div class="card">

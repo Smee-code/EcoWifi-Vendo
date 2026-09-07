@@ -5,45 +5,123 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EcoWifi Admin</title>
 <style>
+  :root {
+    --bg: #101820;          --sidebar: #0c141c;      --topbar: #131d27;
+    --surface: #16212c;     --surface-2: #1b2836;
+    --line: #1d2836;        --line-soft: #1c2735;    --border: #223040;
+    --nav-hover: #131e29;   --nav-active: #16232f;
+    --text: #e6edf3;        --text-on-accent: #fff;
+    --muted: #9db2c6;       --muted-2: #7d93a8;      --faint: #6b8299;
+    --accent: #4fd18b;
+    --input-bg: #0f1923;    --input-border: #2b3c4e;
+    --btn: #2f4054;         --btn-hover: #3b5069;
+    --danger: #7d2b2b;      --danger-hover: #983434;
+    --go: #226e43;          --go-hover: #2b8a54;
+    --code-text: #8fd6ff;
+    --ok-bg: #12401f;       --ok-text: #6ee39b;
+    --warn-bg: #43350f;     --warn-text: #f0c96b;
+    --info-bg: #123a4a;     --info-text: #6bc6e6;
+    --bad-bg: #3a1a1a;      --bad-text: #e08585;
+    --notice-bg: #4a2c14;   --notice-text: #ffcf99;
+    --nav-active-text: #fff;
+  }
+
+  /* Light theme. Not the dark values lightened -- text and pill colours are
+     darkened separately, because a shade that reads well on near-black is
+     usually unreadable on white. */
+  [data-theme="light"] {
+    --bg: #eef1f5;          --sidebar: #ffffff;      --topbar: #ffffff;
+    --surface: #ffffff;     --surface-2: #f3f6f9;
+    --line: #dde4ec;        --line-soft: #e8edf3;    --border: #dae1e9;
+    --nav-hover: #eef2f7;   --nav-active: #e6f4ec;
+    --text: #16212b;        --text-on-accent: #fff;
+    --muted: #46586a;       --muted-2: #5d7183;      --faint: #78899a;
+    --accent: #12784a;
+    --input-bg: #ffffff;    --input-border: #c3cfdb;
+    --btn: #46617d;         --btn-hover: #375068;
+    --danger: #a13a3a;      --danger-hover: #8a2f2f;
+    --go: #1d7a4a;          --go-hover: #17663d;
+    --code-text: #0a5f92;
+    --ok-bg: #d9f2e4;       --ok-text: #0f6039;
+    --warn-bg: #fbf0d7;     --warn-text: #7a5410;
+    --info-bg: #dbeefa;     --info-text: #0f5473;
+    --bad-bg: #fadedd;      --bad-text: #8f2f2f;
+    --notice-bg: #fbedda;   --notice-text: #7a4a12;
+    --nav-active-text: #0c4d30;
+  }
+
+  /* An operator who has never touched the toggle gets whatever their device
+     already asks for, rather than a dark dashboard on a bright screen. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #eef1f5;          --sidebar: #ffffff;      --topbar: #ffffff;
+      --surface: #ffffff;     --surface-2: #f3f6f9;
+      --line: #dde4ec;        --line-soft: #e8edf3;    --border: #dae1e9;
+      --nav-hover: #eef2f7;   --nav-active: #e6f4ec;
+      --text: #16212b;        --text-on-accent: #fff;
+      --muted: #46586a;       --muted-2: #5d7183;      --faint: #78899a;
+      --accent: #12784a;
+      --input-bg: #ffffff;    --input-border: #c3cfdb;
+      --btn: #46617d;         --btn-hover: #375068;
+      --danger: #a13a3a;      --danger-hover: #8a2f2f;
+      --go: #1d7a4a;          --go-hover: #17663d;
+      --code-text: #0a5f92;
+      --ok-bg: #d9f2e4;       --ok-text: #0f6039;
+      --warn-bg: #fbf0d7;     --warn-text: #7a5410;
+      --info-bg: #dbeefa;     --info-text: #0f5473;
+      --bad-bg: #fadedd;      --bad-text: #8f2f2f;
+      --notice-bg: #fbedda;   --notice-text: #7a4a12;
+      --nav-active-text: #0c4d30;
+    }
+  }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: #101820; color: #e6edf3; display: flex;
+  body { margin: 0; background: var(--bg); color: var(--text); display: flex;
          min-height: 100vh;
          font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 
   /* ---- sidebar ---- */
-  .sidebar { width: 214px; flex: 0 0 214px; background: #0c141c;
-             border-right: 1px solid #1d2836; display: flex; flex-direction: column;
+  .sidebar { width: 214px; flex: 0 0 214px; background: var(--sidebar);
+             border-right: 1px solid var(--line); display: flex; flex-direction: column;
              position: sticky; top: 0; height: 100vh; }
-  .brand { padding: 18px 18px 14px; border-bottom: 1px solid #1d2836; }
+  .brand { padding: 18px 18px 14px; border-bottom: 1px solid var(--line); }
   .brand h1 { margin: 0; font-size: .98rem; letter-spacing: -.01em; }
-  .brand p { margin: 3px 0 0; font-size: .68rem; color: #6b8299;
+  .brand p { margin: 3px 0 0; font-size: .68rem; color: var(--faint);
              text-transform: uppercase; letter-spacing: .06em; }
 
   nav { padding: 10px 0; flex: 1; overflow-y: auto; }
   nav a { display: flex; align-items: center; gap: 10px; padding: 9px 18px;
-          color: #9db2c6; text-decoration: none; font-size: .85rem;
+          color: var(--muted); text-decoration: none; font-size: .85rem;
           border-left: 3px solid transparent; cursor: pointer; }
-  nav a:hover { background: #131e29; color: #e6edf3; }
-  nav a.active { background: #16232f; color: #fff; border-left-color: #4fd18b; }
+  nav a:hover { background: var(--nav-hover); color: var(--text); }
+  nav a.active { background: var(--nav-active); color: var(--nav-active-text);
+                 border-left-color: var(--accent); font-weight: 600; }
   nav a .ic { width: 16px; text-align: center; opacity: .85; }
-  nav a .badge { margin-left: auto; background: #7d2b2b; color: #fff;
+  nav a .badge { margin-left: auto; background: var(--danger); color: var(--text-on-accent);
                  font-size: .62rem; font-weight: 700; padding: 1px 6px;
                  border-radius: 10px; }
 
-  .side-foot { border-top: 1px solid #1d2836; padding: 12px 18px; font-size: .7rem;
-               color: #6b8299; }
-  .side-foot button { width: 100%; background: #2f4054; border: 0; color: #cfe0ee;
+  .side-foot { border-top: 1px solid var(--line); padding: 12px 18px; font-size: .7rem;
+               color: var(--faint); }
+  .side-foot button { width: 100%; background: var(--btn); border: 0; color: #cfe0ee;
                       padding: 7px; border-radius: 5px; font-size: .76rem;
                       cursor: pointer; }
-  .side-foot button:hover { background: #3b5069; }
+  .side-foot button:hover { background: var(--btn-hover); }
 
   /* ---- main ---- */
   .main { flex: 1; min-width: 0; }
   .topbar { display: flex; align-items: center; justify-content: space-between;
-            padding: 14px 22px; border-bottom: 1px solid #1d2836; background: #131d27;
+            padding: 14px 22px; border-bottom: 1px solid var(--line); background: var(--topbar);
             position: sticky; top: 0; z-index: 5; gap: 12px; }
   .topbar h2 { margin: 0; font-size: 1rem; }
-  .topbar .meta { font-size: .74rem; color: #7d93a8; }
+  .topbar .right { display: flex; align-items: center; gap: 12px; }
+  .themetoggle { background: transparent; border: 1px solid var(--border);
+                 color: var(--muted); border-radius: 6px; padding: 5px 10px;
+                 font-size: .74rem; cursor: pointer; display: inline-flex;
+                 align-items: center; gap: 6px; line-height: 1; }
+  .themetoggle:hover { background: var(--nav-hover); color: var(--text); }
+  .themetoggle .ic { font-size: .9rem; }
+  .topbar .meta { font-size: .74rem; color: var(--muted-2); }
   .content { padding: 20px 22px 50px; max-width: 1150px; }
 
   .panel { display: none; }
@@ -51,91 +129,105 @@
 
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
            gap: 10px; margin-bottom: 20px; }
-  .stat { background: #16212c; border: 1px solid #223040; border-radius: 8px;
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
           padding: 14px; }
-  .stat .n { font-size: 1.6rem; font-weight: 700; color: #4fd18b;
+  .stat .n { font-size: 1.6rem; font-weight: 700; color: var(--accent);
              font-variant-numeric: tabular-nums; }
-  .stat .l { font-size: .7rem; color: #7d93a8; text-transform: uppercase;
+  .stat .l { font-size: .7rem; color: var(--muted-2); text-transform: uppercase;
              letter-spacing: .04em; margin-top: 2px; }
 
-  section { background: #16212c; border: 1px solid #223040; border-radius: 8px;
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
             margin-bottom: 18px; overflow: hidden; }
   section h3 { margin: 0; font-size: .8rem; text-transform: uppercase;
-               letter-spacing: .05em; color: #9db2c6; padding: 12px 16px;
-               border-bottom: 1px solid #223040; background: #1b2836; }
+               letter-spacing: .05em; color: var(--muted); padding: 12px 16px;
+               border-bottom: 1px solid var(--border); background: var(--surface-2); }
   .pad { padding: 14px 16px; }
 
   table { width: 100%; border-collapse: collapse; font-size: .82rem; }
-  th { text-align: left; padding: 9px 16px; color: #7d93a8; font-weight: 600;
-       border-bottom: 1px solid #223040; white-space: nowrap; }
-  td { padding: 9px 16px; border-bottom: 1px solid #1c2735; }
+  th { text-align: left; padding: 9px 16px; color: var(--muted-2); font-weight: 600;
+       border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 9px 16px; border-bottom: 1px solid var(--line-soft); }
   tr:last-child td { border-bottom: 0; }
   td.mono { font-family: ui-monospace, Consolas, monospace; font-size: .76rem; }
-  .empty { padding: 16px; color: #6b8299; font-size: .82rem; }
+  .empty { padding: 16px; color: var(--faint); font-size: .82rem; }
   .scroll { overflow-x: auto; }
 
   .pill { display: inline-block; padding: 2px 8px; border-radius: 20px;
           font-size: .68rem; font-weight: 700; text-transform: uppercase; }
-  .pill.active { background: #12401f; color: #6ee39b; }
-  .pill.paused { background: #43350f; color: #f0c96b; }
-  .pill.pending { background: #123a4a; color: #6bc6e6; }
-  .pill.blocked { background: #3a1a1a; color: #e08585; }
+  .pill.active { background: var(--ok-bg); color: var(--ok-text); }
+  .pill.paused { background: var(--warn-bg); color: var(--warn-text); }
+  .pill.pending { background: var(--info-bg); color: var(--info-text); }
+  .pill.blocked { background: var(--bad-bg); color: var(--bad-text); }
 
   button.act { border: 0; border-radius: 5px; padding: 5px 10px; font-size: .75rem;
-               font-weight: 600; cursor: pointer; color: #fff; background: #2f4054;
+               font-weight: 600; cursor: pointer; color: var(--text-on-accent); background: var(--btn);
                margin-right: 4px; }
-  button.act:hover { background: #3b5069; }
-  button.act.danger { background: #7d2b2b; }
-  button.act.danger:hover { background: #983434; }
-  button.act.go { background: #226e43; }
-  button.act.go:hover { background: #2b8a54; }
+  button.act:hover { background: var(--btn-hover); }
+  button.act.danger { background: var(--danger); }
+  button.act.danger:hover { background: var(--danger-hover); }
+  button.act.go { background: var(--go); }
+  button.act.go:hover { background: var(--go-hover); }
 
-  input, select { background: #0f1923; border: 1px solid #2b3c4e; color: #e6edf3;
+  input, select { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text);
                   border-radius: 5px; padding: 7px 9px; font-size: .82rem; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .row label { font-size: .78rem; color: #9db2c6; }
+  .row label { font-size: .78rem; color: var(--muted); }
 
   /* Stacked form. Used where fields need labels and room to breathe --
      a line of four unlabelled boxes reads as a puzzle, not a form. */
   .form { max-width: 380px; }
   .form .field { margin-bottom: 14px; }
-  .form label { display: block; font-size: .76rem; color: #9db2c6;
+  .form label { display: block; font-size: .76rem; color: var(--muted);
                 margin-bottom: 5px; }
   .form input { width: 100%; padding: 9px 10px; font-size: .86rem; }
-  .form .hint { font-size: .72rem; color: #6b8299; margin: 4px 0 0; }
-  .form .sep { border-top: 1px solid #223040; margin: 18px 0 16px;
+  .form .hint { font-size: .72rem; color: var(--faint); margin: 4px 0 0; }
+  .form .sep { border-top: 1px solid var(--border); margin: 18px 0 16px;
                padding-top: 4px; }
   .form .sep-label { font-size: .7rem; text-transform: uppercase;
-                     letter-spacing: .06em; color: #7d93a8; margin-bottom: 12px; }
+                     letter-spacing: .06em; color: var(--muted-2); margin-bottom: 12px; }
   .form button { width: 100%; padding: 10px; font-size: .84rem; }
 
   /* Logo previews sit on the portal background, not the dashboard one,
      so the operator sees what a customer will actually see. */
   .logos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
            gap: 16px; }
-  .logocard { border: 1px solid #223040; border-radius: 8px; overflow: hidden; }
+  .logocard { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .logocard h4 { margin: 0; padding: 10px 14px; font-size: .78rem;
-                 background: #1b2836; color: #9db2c6; border-bottom: 1px solid #223040; }
+                 background: var(--surface-2); color: var(--muted); border-bottom: 1px solid var(--border); }
   .logocard .body { padding: 14px; }
   .logoprev { background: #e9ece6; border-radius: 6px; min-height: 110px;
               display: flex; align-items: center; justify-content: center;
               padding: 12px; margin-bottom: 12px; }
   .logoprev img { max-width: 100%; max-height: 96px; }
   .logoprev .none { color: #7d8b82; font-size: .78rem; }
-  .logocard .meta { font-size: .72rem; color: #7d93a8; margin: 0 0 10px; }
-  code { background: #0f1923; padding: 1px 6px; border-radius: 4px;
-         font-size: .76rem; color: #8fd6ff; }
-  .note { font-size: .75rem; color: #7d93a8; line-height: 1.5; }
+  .logocard .meta { font-size: .72rem; color: var(--muted-2); margin: 0 0 10px; }
+  code { background: var(--input-bg); padding: 1px 6px; border-radius: 4px;
+         font-size: .76rem; color: var(--code-text); }
+  .note { font-size: .75rem; color: var(--muted-2); line-height: 1.5; }
 
   @media (max-width: 720px) {
     body { flex-direction: column; }
     .sidebar { width: 100%; flex: none; height: auto; position: static; }
     nav { display: flex; overflow-x: auto; padding: 0; }
     nav a { border-left: 0; border-bottom: 3px solid transparent; white-space: nowrap; }
-    nav a.active { border-left: 0; border-bottom-color: #4fd18b; }
+    nav a.active { border-left: 0; border-bottom-color: var(--accent); }
     nav a .badge { margin-left: 6px; }
   }
 </style>
+<script>
+// Runs before the body paints. Reading the stored choice later, from the
+// main script, would show a flash of the wrong theme on every page load --
+// which is worst for the operator who chose light, since they get a
+// black flash each time.
+(function () {
+  try {
+    var saved = localStorage.getItem('ecowifi-admin-theme');
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+  } catch (e) { /* private mode or storage disabled: follow the device */ }
+})();
+</script>
 </head>
 <body>
 
@@ -166,7 +258,10 @@
 <div class="main">
   <div class="topbar">
     <h2 id="panelTitle">Overview</h2>
-    <span class="meta">refreshed <span id="refreshed">--</span></span>
+    <div class="right">
+      <span class="meta">refreshed <span id="refreshed">--</span></span>
+      <button class="themetoggle" id="themeToggle" onclick="toggleTheme()"></button>
+    </div>
   </div>
 
   <div class="content">
@@ -215,7 +310,7 @@
           <label>Minutes</label>
           <input id="voucherMinutes" type="number" min="1" value="30" size="6">
           <button class="act go" onclick="makeVoucher()">Generate voucher</button>
-          <span id="voucherMsg" style="font-size:.8rem;color:#4fd18b"></span>
+          <span id="voucherMsg" style="font-size:.8rem;color:var(--accent)"></span>
         </div>
       </section>
       <section>
@@ -272,7 +367,7 @@
           <label>Maximum time one device may hold (hours, 0 = no limit)</label>
           <input id="capHours" type="number" min="0" step="0.5" size="6">
           <button class="act go" onclick="saveCap()">Save cap</button>
-          <span id="capMsg" style="font-size:.8rem;color:#4fd18b"></span>
+          <span id="capMsg" style="font-size:.8rem;color:var(--accent)"></span>
         </div>
       </section>
     </div>
@@ -450,11 +545,38 @@ async function post(url, body) {
 }
 
 function dot(state) {
-  const colors = { ok: '#4fd18b', warn: '#f0c96b', bad: '#e08585', unknown: '#6b8299' };
+  const colors = { ok: 'var(--accent)', warn: 'var(--warn-text)', bad: 'var(--bad-text)', unknown: 'var(--faint)' };
   return '<span style="color:' + colors[state] + '">&#9679;</span> ';
 }
 
 // ---- rendering ----
+function currentTheme() {
+  // An explicit choice wins; otherwise report what the device is asking
+  // for, so the button offers the opposite of what is actually on screen.
+  const chosen = document.documentElement.getAttribute('data-theme');
+  if (chosen) return chosen;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+    ? 'light' : 'dark';
+}
+
+function paintThemeToggle() {
+  const btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  const dark = currentTheme() === 'dark';
+  btn.innerHTML = '<span class="ic">' + (dark ? '&#9788;' : '&#9789;') + '</span>' +
+                  (dark ? 'Light' : 'Dark');
+  btn.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try {
+    localStorage.setItem('ecowifi-admin-theme', next);
+  } catch (e) { /* the theme still applies, it just will not be remembered */ }
+  paintThemeToggle();
+}
+
 function prettyKey(k) {
   return String(k).replace(/[_-]+/g, ' ').replace(/^./, c => c.toUpperCase());
 }
@@ -537,7 +659,7 @@ function renderSystemStatus(sys) {
   rows.push(['App uptime', 'ok', fmtDuration(g.app_uptime_seconds)]);
 
   let html = '<table><tbody>' + rows.map(([label, state, text]) =>
-    '<tr><td style="width:240px;color:#9db2c6">' + label + '</td><td>' +
+    '<tr><td style="width:240px;color:var(--muted)">' + label + '</td><td>' +
     dot(state) + esc(text) + '</td></tr>'
   ).join('') + '</tbody></table>';
 
@@ -574,8 +696,8 @@ async function load() {
   const badge = document.getElementById('badgeSessions');
   const live = stats.active_sessions + stats.paused_sessions;
   badge.style.display = live ? 'inline-block' : 'none';
-  badge.style.background = '#12401f';
-  badge.style.color = '#6ee39b';
+  badge.style.background = 'var(--ok-bg)';
+  badge.style.color = 'var(--ok-text)';
   badge.innerText = live;
 
   document.getElementById('stats').innerHTML = [
@@ -598,7 +720,7 @@ async function load() {
         (s.pending_claim ? ' <span class="pill pending">awaiting payment</span>' : '') + '</td>' +
       '<td class="mono">' + fmtDuration(s.remaining_seconds) + '</td>' +
       '<td>' + (s.payments_made || 0) + '</td>' +
-      '<td style="color:#7d93a8">' + fmtTime(s.claimed_at) + '</td>' +
+      '<td style="color:var(--muted-2)">' + fmtTime(s.claimed_at) + '</td>' +
       '<td>' +
         (s.status === 'active' ? '<button class="act" onclick="act(\'/pause\',\'' + esc(s.mac_address) + '\')">Pause</button>' : '') +
         (s.status === 'paused' ? '<button class="act go" onclick="act(\'/resume\',\'' + esc(s.mac_address) + '\')">Resume</button>' : '') +
@@ -613,7 +735,7 @@ async function load() {
     blocklist.map(b =>
       '<tr><td class="mono">' + esc(b.mac_address) + '</td>' +
       '<td>' + esc(b.reason || '--') + '</td>' +
-      '<td style="color:#7d93a8">' + fmtTime(b.created_at) + '</td>' +
+      '<td style="color:var(--muted-2)">' + fmtTime(b.created_at) + '</td>' +
       '<td><button class="act" onclick="unbanMac(\'' + esc(b.mac_address) + '\')">Unblock</button></td></tr>'
     ).join('') + '</tbody></table>'
   ) : '<div class="empty">No devices are blocked.</div>';
@@ -632,12 +754,12 @@ async function load() {
       if (r.quantity > 1 && linear !== null) {
         const diff = r.minutes - linear;
         if (diff > 0) {
-          value = '<span style="color:#6ee39b">+' + diff + ' min bonus</span>';
+          value = '<span style="color:var(--ok-text)">+' + diff + ' min bonus</span>';
         } else {
           // Worth less than buying singles, so the solver will never pick
           // it. Say so plainly -- a tier that silently does nothing looks
           // like the pricing is broken.
-          value = '<span style="color:#e08585">never applies</span>' +
+          value = '<span style="color:var(--bad-text)">never applies</span>' +
                   '<span class="note"> &mdash; ' + linear + ' min is cheaper</span>';
         }
       }
@@ -661,14 +783,14 @@ async function load() {
     vouchers.map(v =>
       '<tr><td><code>' + esc(v.code) + '</code></td><td>' + v.minutes + '</td>' +
       '<td>' + (v.redeemed ? '<span class="pill blocked">used</span>' : '<span class="pill active">unused</span>') + '</td>' +
-      '<td style="color:#7d93a8">' + fmtTime(v.created_at) + '</td></tr>'
+      '<td style="color:var(--muted-2)">' + fmtTime(v.created_at) + '</td></tr>'
     ).join('') + '</tbody></table>'
   ) : '<div class="empty">No vouchers generated yet.</div>';
 
   document.getElementById('txWrap').innerHTML = tx.length ? (
     '<table><thead><tr><th>When</th><th>MAC</th><th>Method</th><th>Qty</th><th>Minutes</th></tr></thead><tbody>' +
     tx.map(t =>
-      '<tr><td style="color:#7d93a8">' + fmtTime(t.created_at) + '</td>' +
+      '<tr><td style="color:var(--muted-2)">' + fmtTime(t.created_at) + '</td>' +
       '<td class="mono">' + esc(t.mac_address) + '</td>' +
       '<td>' + esc(t.payment_method) + '</td><td>' + t.quantity + '</td>' +
       '<td>' + t.minutes_credited + '</td></tr>'
@@ -718,7 +840,7 @@ async function saveRate() {
   const el = document.getElementById('rateMsg');
 
   if (!method || !minutes) {
-    el.style.color = '#e08585';
+    el.style.color = 'var(--bad-text)';
     el.innerText = 'Enter a trigger name and the minutes it earns.';
     return;
   }
@@ -729,7 +851,7 @@ async function saveRate() {
     minutes: Number(minutes)
   });
 
-  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.style.color = ok ? 'var(--accent)' : 'var(--bad-text)';
   el.innerText = ok
     ? 'Saved: ' + data.quantity + ' x ' + data.payment_method + ' = ' + data.minutes + ' min'
     : (data.detail || 'Could not save that tier');
@@ -758,7 +880,7 @@ async function saveTurnTimeout() {
   const seconds = document.getElementById('turnTimeout').value;
   const { ok, data } = await post('/admin/claim-timeout', { seconds: Number(seconds) });
   const el = document.getElementById('turnMsg');
-  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.style.color = ok ? 'var(--accent)' : 'var(--bad-text)';
   el.innerText = ok ? 'Saved: ' + data.seconds + 's' : (data.detail || 'Could not save');
   load();
 }
@@ -767,7 +889,7 @@ async function saveCap() {
   const hours = document.getElementById('capHours').value;
   const { ok, data } = await post('/admin/session-cap', { hours: Number(hours) });
   const el = document.getElementById('capMsg');
-  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.style.color = ok ? 'var(--accent)' : 'var(--bad-text)';
   el.innerText = ok
     ? (data.session_cap_seconds ? 'Cap set to ' + (data.session_cap_seconds / 3600) + ' hr'
                                 : 'Cap removed')
@@ -788,7 +910,7 @@ async function loadPortalText() {
       const current = (data.text || {})[key] || '';
       const isDefault = current === portalTextDefaults[key];
       return '<div style="margin-bottom:12px">' +
-        '<label style="display:block;font-size:.75rem;color:#9db2c6;margin-bottom:4px">' +
+        '<label style="display:block;font-size:.75rem;color:var(--muted);margin-bottom:4px">' +
         esc(prettyKey(key)) + '</label>' +
         '<input id="pt_' + esc(key) + '" style="width:100%;max-width:640px" ' +
         'value="' + (isDefault ? '' : esc(current)) + '" ' +
@@ -805,7 +927,7 @@ async function savePortalText() {
 
   const { ok, data } = await post('/admin/portal-text', { text: values });
   const el = document.getElementById('portalTextMsg');
-  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.style.color = ok ? 'var(--accent)' : 'var(--bad-text)';
   el.innerText = ok ? 'Saved. Customers see this on their next refresh.'
                     : (data.detail || 'Could not save the wording.');
   if (ok) loadPortalText();
@@ -818,7 +940,7 @@ function renderLogos(data) {
   const warn = document.getElementById('logoPanels');
   if (data.uploads_available === false) {
     warn.innerHTML =
-      '<div class="note" style="background:#4a2c14;color:#ffcf99;padding:11px 13px;' +
+      '<div class="note" style="background:var(--notice-bg);color:var(--notice-text);padding:11px 13px;' +
       'border-radius:6px;margin-bottom:14px">Image processing is not available on ' +
       'this machine (' + esc(data.uploads_unavailable_reason || '') + '), so logos ' +
       'cannot be changed. The logos already installed still display normally.</div>';
@@ -855,7 +977,7 @@ function renderLogos(data) {
 function logoMsg(variant, text, good) {
   const el = document.getElementById('logoMsg_' + variant);
   if (!el) return;
-  el.style.color = good ? '#4fd18b' : '#e08585';
+  el.style.color = good ? 'var(--accent)' : 'var(--bad-text)';
   el.innerHTML = text;
 }
 
@@ -908,7 +1030,7 @@ async function makeVoucher() {
 function backupMsg(text, good) {
   const el = document.getElementById('backupMsg');
   el.innerText = text;
-  el.style.color = good ? '#4fd18b' : '#e08585';
+  el.style.color = good ? 'var(--accent)' : 'var(--bad-text)';
 }
 
 async function downloadBackup() {
@@ -968,7 +1090,7 @@ async function changeCredentials() {
     confirm: document.getElementById('pwConfirm').value
   });
 
-  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.style.color = ok ? 'var(--accent)' : 'var(--bad-text)';
   el.innerText = ok
     ? 'Credentials updated (username: ' + data.username + '). Other sessions were signed out.'
     : (data.detail || 'Could not change the credentials.');
@@ -995,6 +1117,17 @@ function panelFromHash() {
 // pressing Back) changes the address bar and nothing else.
 window.addEventListener('hashchange', panelFromHash);
 panelFromHash();
+paintThemeToggle();
+
+// Follow the device if the operator has never chosen -- someone whose
+// laptop flips to dark at sunset should not be left on a white dashboard.
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)')
+    .addEventListener('change', () => {
+      if (!document.documentElement.getAttribute('data-theme')) paintThemeToggle();
+    });
+}
+
 load();
 loadPortalText().catch(() => {});
 loadBranding().catch(() => {});
