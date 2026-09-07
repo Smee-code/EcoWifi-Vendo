@@ -693,9 +693,9 @@ def cancel_claim(mac_address):
 
 
 # How long the device at the front gets before its turn is given away.
-# Long enough to walk to the machine and pay, short enough that somebody
-# who wandered off does not hold the queue.
-DEFAULT_CLAIM_TIMEOUT_SECONDS = 90
+# Restarts on every payment, so this is the gap between bottles, not a cap
+# on how long one customer may use the machine.
+DEFAULT_CLAIM_TIMEOUT_SECONDS = 30
 
 
 def get_claim_timeout_seconds():
