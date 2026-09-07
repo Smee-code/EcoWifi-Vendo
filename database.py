@@ -81,7 +81,8 @@ def init_db():
                 mac_address TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 granted INTEGER DEFAULT 0,
-                granted_at TEXT
+                granted_at TEXT,
+                serving_since TEXT
             )
         """)
         conn.execute(
@@ -231,6 +232,10 @@ def _migrate(conn):
                 (_iso(_now() + timedelta(seconds=row["seconds_remaining"] or 0)),
                  row["mac_address"]),
             )
+
+    claim_cols = {r["name"] for r in conn.execute("PRAGMA table_info(claims)").fetchall()}
+    if "serving_since" not in claim_cols:
+        conn.execute("ALTER TABLE claims ADD COLUMN serving_since TEXT")
 
     _migrate_device_status(conn)
     _migrate_rates(conn)
@@ -648,7 +653,8 @@ def create_claim(mac_address):
             return existing["id"]
 
         cur = conn.execute(
-            "INSERT INTO claims (mac_address, created_at, granted) VALUES (?, ?, 0)",
+            "INSERT INTO claims (mac_address, created_at, granted, serving_since) "
+            "VALUES (?, ?, 0, NULL)",
             (mac_address, _iso(_now())),
         )
         conn.execute(
@@ -684,6 +690,107 @@ def cancel_claim(mac_address):
         conn.execute(
             "DELETE FROM claims WHERE mac_address = ? AND granted = 0", (mac_address,)
         )
+
+
+# How long the device at the front gets before its turn is given away.
+# Long enough to walk to the machine and pay, short enough that somebody
+# who wandered off does not hold the queue.
+DEFAULT_CLAIM_TIMEOUT_SECONDS = 90
+
+
+def get_claim_timeout_seconds():
+    stored = get_setting("claim_timeout_seconds")
+    if stored is None:
+        return DEFAULT_CLAIM_TIMEOUT_SECONDS
+    try:
+        return max(15, int(stored))
+    except ValueError:
+        return DEFAULT_CLAIM_TIMEOUT_SECONDS
+
+
+def set_claim_timeout_seconds(seconds):
+    set_setting("claim_timeout_seconds", str(max(15, int(seconds))))
+
+
+def expire_stale_claims():
+    """Gives away the turn when the front of the queue does nothing.
+
+    Two things go wrong without this, and the second is the serious one:
+
+      1. Everybody behind an absent customer waits forever.
+      2. The abandoned claim is still the oldest, so the NEXT payment
+         anybody makes is credited to the person who walked away. The
+         customer who actually paid gets nothing.
+
+    The clock starts when a claim reaches the FRONT, not when it was
+    created -- otherwise someone who waited politely at position four
+    would arrive at the front already expired.
+
+    Returns the MACs whose turn was taken away."""
+    timeout = get_claim_timeout_seconds()
+    expired = []
+
+    with get_db() as conn:
+        while True:
+            row = conn.execute(
+                "SELECT * FROM claims WHERE granted = 0 "
+                "ORDER BY created_at ASC, id ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                break
+
+            if not row["serving_since"]:
+                # Just reached the front: start its clock and stop.
+                conn.execute(
+                    "UPDATE claims SET serving_since = ? WHERE id = ?",
+                    (_iso(_now()), row["id"]),
+                )
+                break
+
+            waited = (_now() - _parse(row["serving_since"])).total_seconds()
+            if waited <= timeout:
+                break
+
+            conn.execute("DELETE FROM claims WHERE id = ?", (row["id"],))
+            expired.append(row["mac_address"])
+            # Loop again: the next claim is now at the front and needs its
+            # own clock started, and may itself be stale.
+
+    return expired
+
+
+def get_queue_info(mac_address):
+    """Position plus how long this device's turn has left.
+
+    The portal shows the server's number, not its own countdown, so what
+    a customer sees is what the machine will actually honour."""
+    expire_stale_claims()
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT mac_address, serving_since FROM claims WHERE granted = 0 "
+            "ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+
+    position = None
+    for index, row in enumerate(rows, start=1):
+        if row["mac_address"] == mac_address:
+            position = index
+            break
+
+    turn_seconds_left = None
+    if position == 1 and rows and rows[0]["serving_since"]:
+        timeout = get_claim_timeout_seconds()
+        used = (_now() - _parse(rows[0]["serving_since"])).total_seconds()
+        turn_seconds_left = max(0, int(timeout - used))
+
+    return {
+        "position": position,
+        "ahead": (position - 1) if position else 0,
+        "waiting": len(rows),
+        "turn_seconds_left": turn_seconds_left,
+        "turn_timeout_seconds": get_claim_timeout_seconds(),
+    }
 
 
 def get_queue_position(mac_address):

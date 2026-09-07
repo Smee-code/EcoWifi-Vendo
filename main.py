@@ -433,13 +433,12 @@ async def claim(request: Request):
     _reject_if_banned(mac_address)
 
     claim_id = database.create_claim(mac_address)
-    position = database.get_queue_position(mac_address)
+    queue = database.get_queue_info(mac_address)
     return {
         "mac_address": mac_address,
         "claim_id": claim_id,
         "status": "pending",
-        "position": position,
-        "ahead": (position - 1) if position else 0,
+        **queue,
     }
 
 
@@ -468,20 +467,20 @@ async def status(request: Request):
 
     # One chute, one queue. A device that is not at the front must be told
     # to wait: /grant credits the oldest claim, so paying out of turn
-    # would hand the payment to whoever is ahead of them.
-    position = database.get_queue_position(mac_address) if mac_address else None
-    waiting = database.count_open_claims()
+    # would hand the payment to whoever is ahead of them. This also
+    # expires an abandoned turn, so the queue keeps moving.
+    queue = database.get_queue_info(mac_address) if mac_address else {
+        "position": None, "ahead": 0, "waiting": database.count_open_claims(),
+        "turn_seconds_left": None,
+        "turn_timeout_seconds": database.get_claim_timeout_seconds(),
+    }
 
     return {
         "ip": client_ip,
         "mac_address": mac_address,
         "session": database.get_session(mac_address) if mac_address else None,
         "session_cap_seconds": database.get_session_cap_seconds(),
-        "queue": {
-            "position": position,          # 1 = your turn; None = not queued
-            "ahead": (position - 1) if position else 0,
-            "waiting": waiting,            # everyone queued, including you
-        },
+        "queue": queue,
         # Wording belongs to the operator: the same portal fronts a bottle
         # validator, a coin slot or a card reader.
         "portal_text": database.get_portal_text(),
@@ -601,6 +600,12 @@ def _grant_oldest_pending(payment_method=None, quantity=1):
             status_code=400,
             detail=f"quantity cannot exceed {database.MAX_QUANTITY}",
         )
+
+    # Drop abandoned turns first. Without this the oldest claim might
+    # belong to somebody who left, and the payment somebody just made
+    # would be credited to them instead.
+    for gone in database.expire_stale_claims():
+        logger.info(f"Turn expired for {gone}; queue moved on")
 
     pending = database.get_oldest_pending()
     if not pending:
@@ -1230,6 +1235,32 @@ async def set_portal_text(payload: dict, _=Depends(require_admin)):
     text = database.set_portal_text(values)
     logger.info("Portal wording updated")
     return {"text": text, "defaults": database.DEFAULT_PORTAL_TEXT}
+
+
+@app.get("/admin/claim-timeout")
+async def get_claim_timeout(_=Depends(require_admin)):
+    return {"seconds": database.get_claim_timeout_seconds()}
+
+
+@app.post("/admin/claim-timeout")
+async def set_claim_timeout(payload: dict, _=Depends(require_admin)):
+    """How long the customer at the front has before the turn passes on."""
+    seconds = payload.get("seconds")
+    if seconds is None:
+        raise HTTPException(status_code=400, detail="seconds is required")
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="seconds must be a whole number")
+    if seconds < 15:
+        raise HTTPException(
+            status_code=400,
+            detail="Use at least 15 seconds; anything shorter cuts customers off "
+                   "while they are still walking to the machine.",
+        )
+
+    database.set_claim_timeout_seconds(seconds)
+    return {"seconds": database.get_claim_timeout_seconds()}
 
 
 @app.get("/admin/session-cap")

@@ -32,6 +32,15 @@ def _correct_for_clock_jumps():
     )
 
 
+def _expire_abandoned_turns():
+    """Hands the machine to the next customer when the front one leaves.
+
+    Also runs on demand from /status and /grant, but a queue must keep
+    moving even when nobody is looking at a portal page."""
+    for mac in database.expire_stale_claims():
+        logger.info(f"Turn expired for {mac}; the queue moved on")
+
+
 def _check_sessions():
     for session in database.get_expired_sessions():
         mac = session["mac_address"]
@@ -49,6 +58,7 @@ def _run_loop():
     while True:
         try:
             _correct_for_clock_jumps()
+            _expire_abandoned_turns()
             _check_sessions()
         except Exception as e:
             logger.error(f"Error in session worker loop: {e}")

@@ -251,6 +251,22 @@
         </p>
       </section>
       <section>
+        <h3>Turn timeout</h3>
+        <div class="pad row">
+          <label>Seconds the customer at the front has to pay</label>
+          <input id="turnTimeout" type="number" min="15" size="6">
+          <button class="act go" onclick="saveTurnTimeout()">Save</button>
+          <span id="turnMsg" style="font-size:.8rem"></span>
+        </div>
+        <p class="note pad" style="padding-top:0">
+          When it runs out the turn passes to the next person in the queue.
+          Without a limit, someone who walks away blocks everybody behind
+          them <b>and</b> the next payment anybody makes is credited to
+          them instead.
+        </p>
+      </section>
+
+      <section>
         <h3>Session cap</h3>
         <div class="pad row">
           <label>Maximum time one device may hold (hours, 0 = no limit)</label>
@@ -532,12 +548,15 @@ function renderSystemStatus(sys) {
 }
 
 async function load() {
-  const [stats, sessions, rates, vouchers, tx, sys, blocklist, cap] = await Promise.all([
+  const [stats, sessions, rates, vouchers, tx, sys, blocklist, cap, turn] = await Promise.all([
     getJSON('/admin/stats'), getJSON('/sessions'), getJSON('/rates'),
     getJSON('/vouchers'), getJSON('/transactions'),
     getJSON('/admin/system-status'), getJSON('/admin/blocklist'),
-    getJSON('/admin/session-cap')
+    getJSON('/admin/session-cap'), getJSON('/admin/claim-timeout')
   ]);
+
+  const turnField = document.getElementById('turnTimeout');
+  if (document.activeElement !== turnField) turnField.value = turn.seconds;
 
   const capField = document.getElementById('capHours');
   if (document.activeElement !== capField) {
@@ -732,6 +751,15 @@ async function removeRate(method, quantity) {
   const { ok, data } = await post('/rates/delete',
     { payment_method: method, quantity: quantity });
   if (!ok) alert(data.detail || 'Could not remove that rate');
+  load();
+}
+
+async function saveTurnTimeout() {
+  const seconds = document.getElementById('turnTimeout').value;
+  const { ok, data } = await post('/admin/claim-timeout', { seconds: Number(seconds) });
+  const el = document.getElementById('turnMsg');
+  el.style.color = ok ? '#4fd18b' : '#e08585';
+  el.innerText = ok ? 'Saved: ' + data.seconds + 's' : (data.detail || 'Could not save');
   load();
 }
 

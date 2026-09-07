@@ -470,6 +470,7 @@ let modalSecs = 30;
 let bayPayments = 0;      // accepted while this bay session has been open
 let queuePosition = null; // 1 = it is our turn; >1 = people ahead of us
 let queueAhead = 0;
+let turnTimeout = 30;     // how long a turn lasts, per the server
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -668,12 +669,23 @@ async function sync() {
     if (data.queue) {
       queuePosition = data.queue.position;
       queueAhead = data.queue.ahead || 0;
+      if (data.queue.turn_timeout_seconds) turnTimeout = data.queue.turn_timeout_seconds;
+
+      // Trust the SERVER's countdown, not our own. The server is what
+      // actually gives the turn away, so a local timer that disagreed
+      // would either promise time that is already gone or cut someone
+      // off while the machine would still have accepted their payment.
+      if (queuePosition === 1 && data.queue.turn_seconds_left !== null &&
+          data.queue.turn_seconds_left !== undefined) {
+        modalSecs = data.queue.turn_seconds_left;
+      }
     }
     if (data.portal_text) applyText(data.portal_text);
     applyBranding(data.branding);
 
     const wasPending = pendingClaim;
     const wasQueued = queuePosition;
+    const wasPayments = payments;
 
     if (data.session) {
       remaining = data.session.remaining_seconds;
@@ -690,9 +702,18 @@ async function sync() {
     // shutting the door on them after the first is the wrong behaviour
     // for a vending machine. Count it, show it, and re-queue so the next
     // one credits this same device.
-    if (modalOpen && wasPending && !pendingClaim) {
+    // A claim can disappear for two very different reasons: the payment
+    // was accepted, or the turn expired because nobody paid. Counting an
+    // expiry as an acceptance would tell a customer they had bought time
+    // they never received, so decide on whether the payment count
+    // actually moved rather than on the claim vanishing.
+    if (modalOpen && wasPending && !pendingClaim && payments <= wasPayments) {
+      closeModal();
+      say('Your turn expired because no payment was made. Tap ' +
+          (text.action_label || 'Insert payment') + ' to rejoin the queue.', 'warn');
+    } else if (modalOpen && wasPending && !pendingClaim) {
       bayPayments += 1;
-      modalSecs = 30;                 // fresh window for the next one
+      modalSecs = turnTimeout;        // fresh window for the next one
       paintModal();
 
       const tally = document.getElementById('bayTally');
@@ -712,7 +733,7 @@ async function sync() {
     // Reaching the front of the queue: give them a fresh window and tell
     // them, rather than leaving a stale "please wait" on screen.
     if (modalOpen && wasQueued > 1 && queuePosition === 1) {
-      modalSecs = 30;
+      modalSecs = (data.queue && data.queue.turn_seconds_left) || turnTimeout;
       document.getElementById('waitingMsg').innerText =
         text.waiting_text || 'Waiting for the machine to confirm';
       say('Your turn. Complete your payment at the machine.', '');
@@ -846,6 +867,7 @@ async function openInsert() {
   // Where we landed in the queue decides what the bay is allowed to say.
   queuePosition = data.position || 1;
   queueAhead = data.ahead || 0;
+  if (data.turn_timeout_seconds) turnTimeout = data.turn_timeout_seconds;
   if (queueAhead > 0) {
     say('You are number ' + queuePosition + ' in line. Please wait your turn '
         + 'before inserting anything.', 'warn');
@@ -853,7 +875,9 @@ async function openInsert() {
 
   pendingClaim = true;
   modalOpen = true;
-  modalSecs = 30;
+  modalSecs = (data.turn_seconds_left !== null && data.turn_seconds_left !== undefined)
+    ? data.turn_seconds_left
+    : turnTimeout;
   bayPayments = 0;
   document.getElementById('modalUnit').innerText = 'seconds';
   document.getElementById('waitingMsg').innerText =
@@ -883,7 +907,9 @@ function paintModal() {
     ring.classList.remove('queued');
     secs.innerText = modalSecs > 0 ? pad(modalSecs) : '--';
     unit.innerText = modalSecs > 0 ? 'seconds' : 'still waiting';
-    arc.setAttribute('stroke-dashoffset', String(RING * (1 - Math.max(0, modalSecs) / 30)));
+    const span = turnTimeout > 0 ? turnTimeout : 30;
+    arc.setAttribute('stroke-dashoffset',
+      String(RING * (1 - Math.min(1, Math.max(0, modalSecs) / span))));
     document.getElementById('modalBody').innerText =
       text.modal_body || 'Complete the payment on the machine.';
   } else {
@@ -998,17 +1024,16 @@ setInterval(() => {
     paintModal();
 
     if (modalSecs === 0) {
-      // The bay window is up, so get out of the customer's way. The CLAIM
-      // is deliberately left open: cancelling it here would mean a
-      // payment made a second later gets taken and credited to nobody.
-      // They stay queued, and the session view keeps showing that.
+      // The local clock only closes the panel. The SERVER decides when a
+      // turn is actually over and the next poll reports it, so this must
+      // not claim the place is still held -- by now it may not be.
       closeModal();
       if (bayPayments > 0) {
         say(bayPayments + ' ' + unitLabel + (bayPayments === 1 ? '' : 's') +
             ' accepted. Your time is on the counter above.', '');
       } else {
-        say('Still waiting for your payment. Your place in the queue is held ' +
-            'until it is confirmed, or you cancel.', 'warn');
+        say('Time is nearly up for your turn. Pay at the machine now, or it '
+            + 'passes to the next person.', 'warn');
       }
     }
   }
