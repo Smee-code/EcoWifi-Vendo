@@ -53,7 +53,14 @@ case "$WIFI_MODE_CHOICE" in
         echo "IMPORTANT: configure the access point as a BRIDGE / dumb AP:"
         echo "  - set it to Access Point or Bridge mode, NOT router mode"
         echo "  - DISABLE its DHCP server (this machine serves DHCP)"
+        echo "  - set its own address to DHCP / automatic; this machine"
+        echo "    reserves a fixed one for it, so its admin page stays put"
         echo "  - connect its LAN port to this machine, not its WAN port"
+        echo
+        echo "A cable in the AP's WAN port is the commonest cause of"
+        echo "customers getting no address at all: a WAN port expects to be"
+        echo "given an address rather than to bridge clients onto this"
+        echo "machine's segment."
         echo
         echo "If it stays in router mode every customer arrives with the"
         echo "same address and MAC, and granting one grants all of them."
@@ -138,7 +145,11 @@ if ! echo "$COUNTRY_CODE" | grep -Eq '^[A-Z]{2}$'; then
     exit 1
 fi
 fi
-read -p "Static IP to assign to the AP interface (e.g. 192.168.50.1): " AP_IP
+# 10.0.0.1 by default: it cannot collide with the 192.168.x home network
+# this board is usually plugged into, and it is the address piso-wifi
+# customers already expect to type.
+read -p "Static IP for this machine on the AP side [10.0.0.1]: " AP_IP
+AP_IP=${AP_IP:-10.0.0.1}
 read -p "Port for the FastAPI portal (e.g. 8000): " PORTAL_PORT
 
 # Set the operator password here so the Orange Pi is never briefly live
@@ -167,7 +178,7 @@ fi
 # out leases that cannot reach this machine -- so derive it here rather
 # than hardcoding a subnet in dnsmasq.conf.
 if ! echo "$AP_IP" | grep -Eq '^[0-9]{1,3}([.][0-9]{1,3}){3}$'; then
-    echo "Error: '$AP_IP' is not a valid IPv4 address (expected e.g. 192.168.50.1)."
+    echo "Error: '$AP_IP' is not a valid IPv4 address (expected e.g. 10.0.0.1)."
     exit 1
 fi
 
@@ -181,6 +192,35 @@ if [ "$AP_HOST_OCTET" -ge 10 ] && [ "$AP_HOST_OCTET" -le 200 ]; then
     echo "range $DHCP_RANGE_START-$DHCP_RANGE_END, so a client could be handed"
     echo "this machine's own address. Use something outside 10-200, e.g. $AP_SUBNET.1"
     exit 1
+fi
+
+AP_MGMT_IP="$AP_SUBNET.2"
+
+# Reserve a fixed address for the access point itself. Without this the AP
+# takes an ordinary lease and its admin page moves around, which is worst
+# exactly when it matters -- the AP is misbehaving and you need to log in.
+# Optional: an AP already pinned to a static address does not need it.
+AP_RESERVATION="# (no access point reservation configured)"
+if [ "$WIFI_MODE" = "external" ]; then
+    echo
+    echo "The access point can be pinned to $AP_MGMT_IP so its admin page is"
+    echo "always at the same address. Its MAC is usually printed on a label"
+    echo "underneath it. Leave blank to skip."
+    read -p "Access point MAC address (e.g. AA:BB:CC:DD:EE:FF): " AP_MAC
+    if [ -n "$AP_MAC" ]; then
+        if ! echo "$AP_MAC" | grep -Eiq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'; then
+            echo "Error: '$AP_MAC' is not a MAC address (expected AA:BB:CC:DD:EE:FF)."
+            exit 1
+        fi
+        AP_RESERVATION="dhcp-host=$AP_MAC,$AP_MGMT_IP,ecowifi-ap"
+        echo "  the access point will be given $AP_MGMT_IP"
+    else
+        AP_MGMT_IP=""
+        echo "  skipped -- set the AP's address yourself, outside"
+        echo "  $DHCP_RANGE_START-$DHCP_RANGE_END so it cannot clash with a customer"
+    fi
+else
+    AP_MGMT_IP=""
 fi
 
 echo
@@ -300,6 +340,7 @@ sed -e "s/<AP_INTERFACE>/$AP_INTERFACE_ESC/" \
     -e "s/<AP_IP_ADDRESS>/$AP_IP/" \
     -e "s/<DHCP_RANGE_START>/$DHCP_RANGE_START/" \
     -e "s/<DHCP_RANGE_END>/$DHCP_RANGE_END/" \
+    -e "s|<AP_RESERVATION>|$AP_RESERVATION|" \
     "$APP_DIR/dnsmasq.conf" > /etc/dnsmasq.conf
 
 # ---------------------------------------------------------------------
@@ -478,6 +519,7 @@ WIFI_MODE=$WIFI_MODE
 AP_INTERFACE=$AP_INTERFACE
 WAN_INTERFACE=$WAN_INTERFACE
 AP_IP=$AP_IP
+AP_MGMT_IP=$AP_MGMT_IP
 PORTAL_PORT=$PORTAL_PORT
 DEPLOY
 
@@ -583,6 +625,11 @@ echo
 if [ "$WIFI_MODE" = "external" ]; then
     echo "WiFi: provided by your access point on $AP_INTERFACE"
     echo "      (it must be in bridge mode with its DHCP disabled)"
+    if [ -n "$AP_MGMT_IP" ]; then
+        echo "Access point:      http://$AP_MGMT_IP/ (reserved for its MAC)"
+        echo "      Set the AP to obtain its address automatically. It may"
+        echo "      keep an older one until you reboot it or release its lease."
+    fi
 else
     echo "SSID broadcasting: $WIFI_SSID"
 fi

@@ -30,7 +30,7 @@ Orange Pi with a USB WiFi adapter and a USB-Ethernet uplink.
 ├── templates/            portal, admin dashboard, login, first-run setup
 ├── assets/               Shipped default logos
 ├── hostapd.conf          Template: broadcasts the open SSID
-├── dnsmasq.conf          Template: DHCP + DNS hijack for the portal
+├── dnsmasq.conf          Template: DHCP and DNS for AP clients
 ├── nginx.conf            Template: portal on HTTP, admin forced to HTTPS
 ├── doctor.sh             Read-only diagnostic for a deployed gateway
 ├── setup_ap_interface.sh Template: brings the AP interface up at boot
@@ -58,7 +58,31 @@ For layout 2 the access point **must be a bridge, not a router**:
 
 - set it to Access Point or Bridge mode
 - **disable its DHCP server** — this machine serves DHCP
+- set its own address to **automatic/DHCP** — the installer can reserve a
+  fixed one for it, so its admin page never moves
 - connect its **LAN** port to this machine, not its WAN port
+
+A cable in the AP's **WAN** port is the commonest cause of customers
+getting no address at all: a WAN port expects to be handed an address
+rather than to bridge clients onto this machine's segment. If phones get
+no IP, check the port before changing any settings.
+
+### Addresses
+
+The installer defaults this machine to `10.0.0.1` on the AP side, which
+keeps it clear of the `192.168.x` network the board is usually plugged
+into, and matches what piso-wifi customers expect to type. From that it
+derives:
+
+| Address | What it is |
+| --- | --- |
+| `10.0.0.1` | this machine — gateway, DNS and portal |
+| `10.0.0.2` | reserved for the access point's admin page |
+| `10.0.0.10`–`10.0.0.200` | handed out to customers |
+
+Giving the installer an address inside the customer range is refused: a
+phone could otherwise be handed the gateway's own address. Supply a
+different first address and the whole set moves with it.
 
 An AP left in router mode NATs its clients, so every customer arrives here
 wearing the AP's single IP and MAC. Granting one customer would grant them
