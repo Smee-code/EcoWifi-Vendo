@@ -234,6 +234,8 @@
   .pillbadge { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px;
                border-radius: 99px; background: var(--mint); font: 600 10.5px var(--body);
                letter-spacing: .12em; text-transform: uppercase; color: #1c6b4a; }
+  .pillbadge.waiting-turn { background: #fdf4e3; color: #8a5b00; }
+  .ring.queued .inner b { font-size: 30px; }
   .modal h2 { margin: 14px 0 4px; font: 700 24px var(--display); letter-spacing: -.02em; }
   .modal p.lead { margin: 0 auto; max-width: 270px; font: 500 12.5px/1.5 var(--body); color: var(--muted); }
   .ring { position: relative; width: 150px; height: 150px; margin: 22px auto 18px; }
@@ -425,11 +427,11 @@
 
 <div class="modal-wrap" id="modal" style="display:none">
   <div class="modal">
-    <span class="pillbadge">Ready</span>
+    <span class="pillbadge" id="bayBadge">Ready</span>
     <h2 id="modalTitle">Waiting for payment</h2>
     <p class="lead" id="modalBody">Complete the payment on the machine.</p>
 
-    <div class="ring">
+    <div class="ring" id="bayRing">
       <svg viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="54" fill="none" stroke="#eaf1ec" stroke-width="9"></circle>
         <circle id="ringArc" cx="60" cy="60" r="54" fill="none" stroke="#0e6b52" stroke-width="9"
@@ -466,6 +468,8 @@ let screen = 'home';
 let modalOpen = false;
 let modalSecs = 30;
 let bayPayments = 0;      // accepted while this bay session has been open
+let queuePosition = null; // 1 = it is our turn; >1 = people ahead of us
+let queueAhead = 0;
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -548,14 +552,19 @@ function paint() {
   // Nothing can be granted until the operator has priced a payment, so
   // do not invite the customer to start something that will be refused.
   iBtn.disabled = !configured;
+  const queued = pendingClaim && queueAhead > 0;
   document.getElementById('insertTitle').innerText = !configured
     ? 'Not available yet'
+    : queued ? 'Number ' + queuePosition + ' in line'
     : (pendingClaim ? 'Waiting for confirmation' : (text.action_label || 'Insert payment'));
   document.getElementById('insertSub').innerText = !configured
     ? 'This machine has not been set up yet'
-    : (pendingClaim
-        ? 'Tap to reopen or cancel'
-        : (text.action_hint || 'Adds ' + unitMinutes + ' minutes to your session'));
+    : queued
+      ? (queueAhead === 1 ? 'Someone is using the machine - wait your turn'
+                          : queueAhead + ' ahead of you - wait your turn')
+      : (pendingClaim
+          ? 'Tap to reopen or cancel'
+          : (text.action_hint || 'Adds ' + unitMinutes + ' minutes to your session'));
 }
 
 function strip(id, msg, kind) {
@@ -656,10 +665,15 @@ async function sync() {
     lastConn = { ip: data.ip, mac: data.mac_address };
     capSeconds = data.session_cap_seconds || 0;
     configured = data.configured !== false;
+    if (data.queue) {
+      queuePosition = data.queue.position;
+      queueAhead = data.queue.ahead || 0;
+    }
     if (data.portal_text) applyText(data.portal_text);
     applyBranding(data.branding);
 
     const wasPending = pendingClaim;
+    const wasQueued = queuePosition;
 
     if (data.session) {
       remaining = data.session.remaining_seconds;
@@ -694,6 +708,16 @@ async function sync() {
       const again = await post('/claim');
       if (again.ok) pendingClaim = true;
     }
+
+    // Reaching the front of the queue: give them a fresh window and tell
+    // them, rather than leaving a stale "please wait" on screen.
+    if (modalOpen && wasQueued > 1 && queuePosition === 1) {
+      modalSecs = 30;
+      document.getElementById('waitingMsg').innerText =
+        text.waiting_text || 'Waiting for the machine to confirm';
+      say('Your turn. Complete your payment at the machine.', '');
+    }
+    if (modalOpen) paintModal();
 
     paintMachine(data.machine);
     paint();
@@ -818,6 +842,15 @@ async function toggleTime() {
 async function openInsert() {
   const { ok, data } = await post('/claim');
   if (!ok) { say(data.detail || 'Could not identify your device.', 'err'); return; }
+
+  // Where we landed in the queue decides what the bay is allowed to say.
+  queuePosition = data.position || 1;
+  queueAhead = data.ahead || 0;
+  if (queueAhead > 0) {
+    say('You are number ' + queuePosition + ' in line. Please wait your turn '
+        + 'before inserting anything.', 'warn');
+  }
+
   pendingClaim = true;
   modalOpen = true;
   modalSecs = 30;
@@ -831,9 +864,46 @@ async function openInsert() {
 }
 
 function paintModal() {
-  document.getElementById('modalSecs').innerText = modalSecs > 0 ? pad(modalSecs) : '--';
+  // Only the device at the front of the queue may be told to pay. There
+  // is one chute, and the machine credits the OLDEST claim -- so if
+  // someone further back inserts a bottle, the person ahead of them gets
+  // the time. Inviting them to pay would take their money for somebody
+  // else's session.
+  const myTurn = (queuePosition === null || queuePosition <= 1);
+
+  const badge = document.getElementById('bayBadge');
+  const ring = document.getElementById('bayRing');
+  const secs = document.getElementById('modalSecs');
+  const unit = document.getElementById('modalUnit');
   const arc = document.getElementById('ringArc');
-  arc.setAttribute('stroke-dashoffset', String(RING * (1 - Math.max(0, modalSecs) / 30)));
+
+  if (myTurn) {
+    badge.className = 'pillbadge';
+    badge.innerText = 'Ready';
+    ring.classList.remove('queued');
+    secs.innerText = modalSecs > 0 ? pad(modalSecs) : '--';
+    unit.innerText = modalSecs > 0 ? 'seconds' : 'still waiting';
+    arc.setAttribute('stroke-dashoffset', String(RING * (1 - Math.max(0, modalSecs) / 30)));
+    document.getElementById('modalBody').innerText =
+      text.modal_body || 'Complete the payment on the machine.';
+  } else {
+    badge.className = 'pillbadge waiting-turn';
+    badge.innerText = 'Please wait';
+    ring.classList.add('queued');
+    secs.innerText = '#' + queuePosition;
+    unit.innerText = 'in line';
+    // A full ring: nothing is counting down, they are simply waiting.
+    arc.setAttribute('stroke-dashoffset', '0');
+    document.getElementById('modalBody').innerText =
+      queueAhead === 1
+        ? 'Someone else is using the machine. Please wait for your turn '
+          + 'before inserting anything.'
+        : queueAhead + ' people are ahead of you. Please wait for your turn '
+          + 'before inserting anything.';
+    document.getElementById('waitingMsg').innerText =
+      'You will be told when the machine is yours.';
+  }
+
   paintTally();
 }
 
@@ -859,6 +929,10 @@ function paintTally() {
 function closeModal() {
   modalOpen = false;
   document.getElementById('modal').style.display = 'none';
+}
+
+function myTurn() {
+  return queuePosition === null || queuePosition <= 1;
 }
 
 async function cancelInsert() {
@@ -915,7 +989,11 @@ setInterval(() => {
     paint();
     if (remaining === 0) sync();
   }
-  if (modalOpen && modalSecs > 0) {
+  // Do not burn the bay window while someone else is at the machine --
+  // the countdown belongs to whoever's turn it actually is.
+  if (modalOpen && queuePosition !== null && queuePosition > 1) {
+    paintModal();
+  } else if (modalOpen && modalSecs > 0) {
     modalSecs -= 1;
     paintModal();
 

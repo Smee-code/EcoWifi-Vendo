@@ -686,6 +686,37 @@ def cancel_claim(mac_address):
         )
 
 
+def get_queue_position(mac_address):
+    """Where this device stands in the queue. 1 means it is next.
+
+    The machine has one chute, and /grant always credits the OLDEST open
+    claim. So if a second customer inserts while someone else is at the
+    front, the payment goes to that first customer -- the second person
+    pays and the first one benefits. Position is what lets the portal
+    tell people to wait their turn instead of inviting them to pay into
+    somebody else's session."""
+    if not mac_address:
+        return None
+
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT mac_address FROM claims WHERE granted = 0 "
+            "ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+
+    for index, row in enumerate(rows, start=1):
+        if row["mac_address"] == mac_address:
+            return index
+    return None
+
+
+def count_open_claims():
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM claims WHERE granted = 0"
+        ).fetchone()["n"]
+
+
 def get_open_claims():
     with get_db() as conn:
         rows = conn.execute(

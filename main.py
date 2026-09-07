@@ -433,7 +433,14 @@ async def claim(request: Request):
     _reject_if_banned(mac_address)
 
     claim_id = database.create_claim(mac_address)
-    return {"mac_address": mac_address, "claim_id": claim_id, "status": "pending"}
+    position = database.get_queue_position(mac_address)
+    return {
+        "mac_address": mac_address,
+        "claim_id": claim_id,
+        "status": "pending",
+        "position": position,
+        "ahead": (position - 1) if position else 0,
+    }
 
 
 @app.post("/claim/cancel")
@@ -458,11 +465,23 @@ async def status(request: Request):
     client_ip = request.client.host
     mac_address = network_service.resolve_mac_from_ip(client_ip)
     device = database.get_device_status()
+
+    # One chute, one queue. A device that is not at the front must be told
+    # to wait: /grant credits the oldest claim, so paying out of turn
+    # would hand the payment to whoever is ahead of them.
+    position = database.get_queue_position(mac_address) if mac_address else None
+    waiting = database.count_open_claims()
+
     return {
         "ip": client_ip,
         "mac_address": mac_address,
         "session": database.get_session(mac_address) if mac_address else None,
         "session_cap_seconds": database.get_session_cap_seconds(),
+        "queue": {
+            "position": position,          # 1 = your turn; None = not queued
+            "ahead": (position - 1) if position else 0,
+            "waiting": waiting,            # everyone queued, including you
+        },
         # Wording belongs to the operator: the same portal fronts a bottle
         # validator, a coin slot or a card reader.
         "portal_text": database.get_portal_text(),
