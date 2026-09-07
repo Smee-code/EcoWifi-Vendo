@@ -5,9 +5,15 @@ Requires=ecowifi-nftables.service
 
 [Service]
 WorkingDirectory=<APP_DIR>
+# Invoked as 'python -m uvicorn', NOT 'venv/bin/uvicorn'. The venv is
+# created with --system-site-packages so it can use Debian's prebuilt
+# packages on architectures with no wheels, and a venv does not generate
+# launcher scripts for packages it merely inherits -- venv/bin/uvicorn
+# does not exist there. Running the module works either way.
+#
 # Loopback only: nginx is the only thing that should reach the app
 # directly, so the plain-HTTP port cannot be hit from the WiFi.
-ExecStart=<APP_DIR>/venv/bin/uvicorn main:app --host 127.0.0.1 --port <PORTAL_PORT> --proxy-headers --forwarded-allow-ips 127.0.0.1
+ExecStart=<APP_DIR>/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port <PORTAL_PORT> --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=on-failure
 RestartSec=5
 
