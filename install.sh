@@ -369,6 +369,22 @@ apt-get install -y python3-fastapi python3-uvicorn python3-pydantic \
     echo "  (some apt packages unavailable; will fall back to pip)"
 
 echo "Setting up Python virtual environment..."
+
+# A venv left over from an earlier run may have been created WITHOUT
+# --system-site-packages, which seals it off from the apt packages
+# installed above. Re-running the installer would then compile again and
+# fail again. Recreating is cheap and it is not the operator's job to
+# know that, so do it here rather than telling them to delete a folder.
+if [ -d "$APP_DIR/venv" ]; then
+    if grep -q "include-system-site-packages *= *false" "$APP_DIR/venv/pyvenv.cfg" 2>/dev/null; then
+        echo "  removing an existing venv that cannot see system packages"
+        rm -rf "$APP_DIR/venv"
+    elif ! "$APP_DIR/venv/bin/python" -c "import sys" >/dev/null 2>&1; then
+        echo "  removing a broken venv from an earlier run"
+        rm -rf "$APP_DIR/venv"
+    fi
+fi
+
 # --system-site-packages is what lets the venv use the apt packages
 # above. Without it the venv is sealed off and pip starts compiling.
 python3 -m venv --system-site-packages "$APP_DIR/venv"
