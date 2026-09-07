@@ -236,6 +236,13 @@
                letter-spacing: .12em; text-transform: uppercase; color: #1c6b4a; }
   .pillbadge.waiting-turn { background: #fdf4e3; color: #8a5b00; }
   .ring.queued .inner b { font-size: 30px; }
+
+  /* Last-call state. The buzz is the primary signal, but iOS has no
+     vibration API and a phone may be on a table, so the ring warns too. */
+  .ring.lastcall circle:last-of-type { stroke: #e08a1f; }
+  .ring.lastcall .inner b { color: #b8690a; }
+  .ring.lastcall { animation: lastCallPulse 1s ease-in-out infinite; }
+  @keyframes lastCallPulse { 50% { opacity: .55; } }
   .modal h2 { margin: 14px 0 4px; font: 700 24px var(--display); letter-spacing: -.02em; }
   .modal p.lead { margin: 0 auto; max-width: 270px; font: 500 12.5px/1.5 var(--body); color: var(--muted); }
   .ring { position: relative; width: 150px; height: 150px; margin: 22px auto 18px; }
@@ -471,6 +478,10 @@ let bayPayments = 0;      // accepted while this bay session has been open
 let queuePosition = null; // 1 = it is our turn; >1 = people ahead of us
 let queueAhead = 0;
 let turnTimeout = 30;     // how long a turn lasts, per the server
+let buzzedThisTurn = false;   // last-call warning fires once per turn
+
+// Seconds remaining when the customer is warned their turn is nearly up.
+const LAST_CALL_SECONDS = 10;
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -714,6 +725,7 @@ async function sync() {
     } else if (modalOpen && wasPending && !pendingClaim) {
       bayPayments += 1;
       modalSecs = turnTimeout;        // fresh window for the next one
+      armLastCall();                  // and a fresh warning for it
       paintModal();
 
       const tally = document.getElementById('bayTally');
@@ -734,6 +746,7 @@ async function sync() {
     // them, rather than leaving a stale "please wait" on screen.
     if (modalOpen && wasQueued > 1 && queuePosition === 1) {
       modalSecs = (data.queue && data.queue.turn_seconds_left) || turnTimeout;
+      armLastCall();
       document.getElementById('waitingMsg').innerText =
         text.waiting_text || 'Waiting for the machine to confirm';
       say('Your turn. Complete your payment at the machine.', '');
@@ -879,6 +892,7 @@ async function openInsert() {
     ? data.turn_seconds_left
     : turnTimeout;
   bayPayments = 0;
+  armLastCall();
   document.getElementById('modalUnit').innerText = 'seconds';
   document.getElementById('waitingMsg').innerText =
     text.waiting_text || 'Waiting for the machine to confirm';
@@ -957,6 +971,38 @@ function closeModal() {
   document.getElementById('modal').style.display = 'none';
 }
 
+function lastCall() {
+  // Fires once per turn, at LAST_CALL_SECONDS remaining.
+  //
+  // navigator.vibrate is Android-only -- iOS Safari does not implement it
+  // and never has -- and browsers ignore it unless the page has been
+  // interacted with. Opening the bay is a tap, so that condition holds
+  // here. Everything is guarded because a blocked or absent API must not
+  // take the countdown down with it, and the ring turns amber regardless
+  // so the warning still lands on an iPhone or a phone lying face down.
+  buzzedThisTurn = true;
+
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      // Two short pulses: one buzz reads as a notification, two reads as
+      // "look at me".
+      navigator.vibrate([140, 90, 140]);
+    }
+  } catch (e) { /* vibration unavailable or blocked; the ring still warns */ }
+
+  const ring = document.getElementById('bayRing');
+  if (ring) ring.classList.add('lastcall');
+
+  document.getElementById('waitingMsg').innerText =
+    'Almost out of time - pay now or your turn passes on.';
+}
+
+function armLastCall() {
+  buzzedThisTurn = false;
+  const ring = document.getElementById('bayRing');
+  if (ring) ring.classList.remove('lastcall');
+}
+
 function myTurn() {
   return queuePosition === null || queuePosition <= 1;
 }
@@ -1022,6 +1068,13 @@ setInterval(() => {
   } else if (modalOpen && modalSecs > 0) {
     modalSecs -= 1;
     paintModal();
+
+    // <= rather than == : the server's countdown can skip a value when a
+    // poll lands, and a warning that only fires on an exact number would
+    // simply never happen.
+    if (!buzzedThisTurn && modalSecs <= LAST_CALL_SECONDS && myTurn()) {
+      lastCall();
+    }
 
     if (modalSecs === 0) {
       // The local clock only closes the panel. The SERVER decides when a
