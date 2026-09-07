@@ -346,9 +346,47 @@ elif ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf; then
 fi
 sysctl -p
 
+# ---------------------------------------------------------------------
+# Dependencies, without needing a compiler.
+#
+# PyPI publishes no wheels for 32-bit ARM (armv7l), which is what an
+# Orange Pi PC and most older SBCs are. pip therefore falls back to
+# BUILDING from source: Pillow needs a C toolchain, uvloop needs to
+# compile libuv, and pydantic-core needs Rust. On a board with 1 GB of
+# RAM that is half an hour of compiling if the toolchain is present, and
+# an outright failure if it is not:
+#
+#   error: command 'arm-linux-gnueabihf-gcc' failed: No such file
+#   configure: error: no acceptable C compiler found in $PATH
+#
+# Debian ships all of them prebuilt for this architecture, so install
+# those and let the venv see them. pip is then only a fallback for
+# platforms where the apt packages are missing.
+# ---------------------------------------------------------------------
+echo "Installing Python dependencies from Debian packages..."
+apt-get install -y python3-fastapi python3-uvicorn python3-pydantic \
+    python3-dotenv python3-pil 2>/dev/null || \
+    echo "  (some apt packages unavailable; will fall back to pip)"
+
 echo "Setting up Python virtual environment..."
-python3 -m venv "$APP_DIR/venv"
-"$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"
+# --system-site-packages is what lets the venv use the apt packages
+# above. Without it the venv is sealed off and pip starts compiling.
+python3 -m venv --system-site-packages "$APP_DIR/venv"
+
+if "$APP_DIR/venv/bin/python" -c "import fastapi, uvicorn, pydantic, dotenv" >/dev/null 2>&1; then
+    echo "  core dependencies available from the system (nothing to build)"
+else
+    echo "  some dependencies missing; installing with pip..."
+    if ! "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/requirements.txt"; then
+        echo
+        echo "Error: pip could not install the dependencies."
+        echo "On 32-bit ARM this usually means it tried to compile them."
+        echo "Install the Debian packages by hand and re-run this script:"
+        echo "  apt-get install -y python3-fastapi python3-uvicorn \\"
+        echo "      python3-pydantic python3-dotenv python3-pil"
+        exit 1
+    fi
+fi
 
 # Pillow is optional: the app runs without it, only logo uploads stop
 # working. Say so plainly rather than letting the operator discover it

@@ -1,8 +1,17 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-python-dotenv==1.0.1
-# Logo processing: resizing uploads and making white backgrounds
-# transparent. Wheels exist for arm64, so this still installs on an
-# Orange Pi without a compiler.
-Pillow>=10.0
+# Used only where prebuilt wheels exist. On 32-bit ARM (armv7l) PyPI has
+# none, so install.sh installs the Debian packages instead and builds the
+# venv with --system-site-packages. Nothing here needs a compiler when
+# that path is taken.
 
+fastapi>=0.100
+python-dotenv>=1.0
+
+# Plain uvicorn, NOT uvicorn[standard]. The "standard" extra pulls in
+# uvloop and httptools, which are C extensions with no armv7l wheels, so
+# pip tries to compile libuv and fails on a board with no toolchain. They
+# are performance extras; uvicorn runs fine without them, and this
+# gateway serves a handful of phones.
+uvicorn>=0.30
+
+# Logo processing only. The app runs without it -- see branding.py.
+Pillow>=10.0
