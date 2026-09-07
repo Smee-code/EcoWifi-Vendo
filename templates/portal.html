@@ -247,6 +247,22 @@
   .waiting { display: flex; align-items: center; justify-content: center; gap: 9px;
              padding: 11px 14px; border-radius: 14px; background: #f6f9f5;
              font: 500 12px var(--body); color: #4a5a52; }
+
+  /* Running tally inside the bay. A customer feeding in several items
+     needs to see the count and the time rise as each one is accepted --
+     without it the machine looks like it swallowed them. */
+  .tally { display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+           margin: 0 0 12px; }
+  .tally div { background: var(--mint); border-radius: 14px; padding: 11px 8px; }
+  .tally .n { font: 800 22px var(--display); color: var(--green);
+              letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .tally .l { font: 600 9.5px var(--body); letter-spacing: .1em;
+              text-transform: uppercase; color: #6b8279; margin-top: 2px; }
+  .tally.flash div { animation: acceptPulse .7s ease; }
+  @keyframes acceptPulse {
+    0% { background: var(--lime); transform: scale(1.04); }
+    100% { background: var(--mint); transform: scale(1); }
+  }
   .waiting .bottle { animation: dropToken 1.6s ease-in-out infinite; width: 14px; height: 22px; }
   .modal .cancel { margin-top: 14px; width: 100%; cursor: pointer;
                    border: 1px solid rgba(18,38,31,.14); background: #fff; border-radius: 14px;
@@ -423,8 +439,13 @@
       <div class="inner"><b id="modalSecs">30</b><span id="modalUnit">seconds</span></div>
     </div>
 
+    <div class="tally" id="bayTally">
+      <div><div class="n" id="bayCount">0</div><div class="l" id="bayCountLabel">accepted</div></div>
+      <div><div class="n" id="bayTime">00:00</div><div class="l">your time</div></div>
+    </div>
+
     <div class="waiting"><span class="bottle"></span><span id="waitingMsg">Waiting for the machine to confirm</span></div>
-    <button class="cancel" onclick="cancelInsert()">Cancel</button>
+    <button class="cancel" id="bayCloseBtn" onclick="cancelInsert()">Cancel</button>
   </div>
 </div>
 
@@ -444,6 +465,7 @@ let text = {};
 let screen = 'home';
 let modalOpen = false;
 let modalSecs = 30;
+let bayPayments = 0;      // accepted while this bay session has been open
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -648,11 +670,29 @@ async function sync() {
       remaining = 0; status = 'blocked'; pendingClaim = false; payments = 0;
     }
 
-    // The claim closed while the modal was up: the payment device
-    // confirmed a payment and we credited it.
+    // The claim closed while the bay was open: the device confirmed a
+    // payment and we credited it. Do NOT close the bay -- a customer
+    // with three bottles in hand is about to insert the next one, and
+    // shutting the door on them after the first is the wrong behaviour
+    // for a vending machine. Count it, show it, and re-queue so the next
+    // one credits this same device.
     if (modalOpen && wasPending && !pendingClaim) {
-      closeModal();
-      say('Payment confirmed. Time added to your session.', '');
+      bayPayments += 1;
+      modalSecs = 30;                 // fresh window for the next one
+      paintModal();
+
+      const tally = document.getElementById('bayTally');
+      tally.classList.remove('flash');
+      void tally.offsetWidth;         // restart the animation
+      tally.classList.add('flash');
+
+      document.getElementById('waitingMsg').innerText =
+        'Accepted. Insert another, or tap Done.';
+
+      // Re-queue for the next item. /claim is idempotent per device, so
+      // this cannot stack up duplicate claims.
+      const again = await post('/claim');
+      if (again.ok) pendingClaim = true;
     }
 
     paintMachine(data.machine);
@@ -707,8 +747,19 @@ function applyBranding(b) {
   }
 }
 
+let lastTextApplied = null;
+
 function applyText(t) {
   text = t || {};
+
+  // Only rewrite the DOM when the wording actually changed. This runs on
+  // every poll, and re-applying it unconditionally overwrote runtime
+  // messages a few seconds after they appeared -- "Accepted. Insert
+  // another" reverted to the generic waiting text while the customer was
+  // still standing there.
+  const fingerprint = JSON.stringify(text);
+  if (fingerprint === lastTextApplied) return;
+  lastTextApplied = fingerprint;
   document.querySelectorAll('.tagline').forEach(el => {
     if (text.tagline) el.innerText = text.tagline;
   });
@@ -770,6 +821,7 @@ async function openInsert() {
   pendingClaim = true;
   modalOpen = true;
   modalSecs = 30;
+  bayPayments = 0;
   document.getElementById('modalUnit').innerText = 'seconds';
   document.getElementById('waitingMsg').innerText =
     text.waiting_text || 'Waiting for the machine to confirm';
@@ -782,6 +834,26 @@ function paintModal() {
   document.getElementById('modalSecs').innerText = modalSecs > 0 ? pad(modalSecs) : '--';
   const arc = document.getElementById('ringArc');
   arc.setAttribute('stroke-dashoffset', String(RING * (1 - Math.max(0, modalSecs) / 30)));
+  paintTally();
+}
+
+function paintTally() {
+  document.getElementById('bayCount').innerText = bayPayments;
+  document.getElementById('bayCountLabel').innerText =
+    bayPayments === 1 ? unitLabel + ' accepted' : unitLabel + 's accepted';
+
+  // Total time now on the account, not just what this bay added -- that
+  // is the number the customer actually cares about.
+  const h = Math.floor(remaining / 3600);
+  const m = Math.floor((remaining % 3600) / 60);
+  const s = remaining % 60;
+  document.getElementById('bayTime').innerText =
+    h > 0 ? h + ':' + pad(m) + ':' + pad(s) : pad(m) + ':' + pad(s);
+
+  // Once something has been accepted, Cancel would read as "throw it
+  // away". It is a way out, not a rejection.
+  document.getElementById('bayCloseBtn').innerText =
+    bayPayments > 0 ? 'Done' : 'Cancel';
 }
 
 function closeModal() {
@@ -790,9 +862,18 @@ function closeModal() {
 }
 
 async function cancelInsert() {
+  const accepted = bayPayments;
   closeModal();
   await post('/claim/cancel');
-  say('Cancelled. No payment was taken.', 'err');
+
+  // "Cancelled, no payment taken" would be a lie if the machine just
+  // accepted three bottles. Only the outstanding claim is cancelled.
+  if (accepted > 0) {
+    say(accepted + ' ' + unitLabel + (accepted === 1 ? '' : 's') +
+        ' accepted. Enjoy your time.', '');
+  } else {
+    say('Cancelled. No payment was taken.', 'err');
+  }
   sync();
 }
 
@@ -844,8 +925,13 @@ setInterval(() => {
       // payment made a second later gets taken and credited to nobody.
       // They stay queued, and the session view keeps showing that.
       closeModal();
-      say('Still waiting for your payment. Your place in the queue is held ' +
-          'until it is confirmed, or you cancel.', 'warn');
+      if (bayPayments > 0) {
+        say(bayPayments + ' ' + unitLabel + (bayPayments === 1 ? '' : 's') +
+            ' accepted. Your time is on the counter above.', '');
+      } else {
+        say('Still waiting for your payment. Your place in the queue is held ' +
+            'until it is confirmed, or you cancel.', 'warn');
+      }
     }
   }
 }, 1000);
