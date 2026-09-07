@@ -159,6 +159,64 @@ if command -v ss >/dev/null 2>&1; then
     ss -lntp 2>/dev/null | grep -q ":443 " && ok "port 443 listening (admin)"  || warn "nothing on port 443"
 fi
 
+# -------------------------------------------------------------------- dhcp
+# A client stuck on a 169.254.x address got no DHCP answer at all. That
+# has several causes that look identical from the client, so separate
+# them here: no cable, no dnsmasq, dnsmasq not listening on this
+# interface, or requests that never arrive because the access point is
+# not bridging them.
+echo
+echo "DHCP"
+if [ -n "$AP_INTERFACE" ] && [ -e "/sys/class/net/$AP_INTERFACE" ]; then
+    CARRIER=$(cat "/sys/class/net/$AP_INTERFACE/carrier" 2>/dev/null)
+    if [ "$CARRIER" = "1" ]; then
+        ok "$AP_INTERFACE has a link (something is plugged in and powered)"
+    else
+        bad "$AP_INTERFACE has NO link - nothing is connected to it"
+        hint "check the cable is in the access point's LAN port, not its WAN port"
+        hint "a WAN port will not bridge clients onto this machine's segment"
+    fi
+fi
+
+if ss -lnup 2>/dev/null | grep -q ':67 '; then
+    ok "a DHCP server is listening on port 67"
+else
+    bad "nothing is listening on port 67 - no client can get an address"
+    hint "systemctl status dnsmasq; journalctl -u dnsmasq -n 30 --no-pager"
+fi
+
+LEASES=/var/lib/misc/dnsmasq.leases
+[ -r "$LEASES" ] || LEASES=/var/lib/dnsmasq/dnsmasq.leases
+if [ -r "$LEASES" ]; then
+    LEASE_COUNT=$(wc -l < "$LEASES" 2>/dev/null | tr -d ' ')
+    if [ "${LEASE_COUNT:-0}" -gt 0 ]; then
+        ok "$LEASE_COUNT address(es) currently leased"
+        sed 's/^/         /' "$LEASES"
+    else
+        warn "no addresses leased yet - no client has successfully asked"
+    fi
+else
+    warn "no lease file found; dnsmasq may never have served a client"
+fi
+
+# The decisive evidence: did a request actually reach this machine?
+if command -v journalctl >/dev/null 2>&1; then
+    DISCOVERS=$(journalctl -u dnsmasq --since '-30min' --no-pager 2>/dev/null |
+                grep -c 'DHCPDISCOVER')
+    OFFERS=$(journalctl -u dnsmasq --since '-30min' --no-pager 2>/dev/null |
+             grep -c 'DHCPACK')
+    if [ "${DISCOVERS:-0}" -eq 0 ]; then
+        warn "no DHCP requests reached this machine in the last 30 minutes"
+        hint "if a client tried in that window, its request never arrived:"
+        hint "the AP is in router mode, or cabled by its WAN port"
+    elif [ "${OFFERS:-0}" -eq 0 ]; then
+        bad "$DISCOVERS request(s) arrived but none were answered"
+        hint "dnsmasq is refusing them - journalctl -u dnsmasq -n 40 --no-pager"
+    else
+        ok "$DISCOVERS request(s) received, $OFFERS answered in the last 30 min"
+    fi
+fi
+
 # ---------------------------------------------------------------- firewall
 echo
 echo "Firewall"
@@ -268,5 +326,11 @@ else
     echo "Nothing broken from here. If clients still cannot connect, check"
     echo "from a PHONE that it gets its own IP, not 127.0.0.1:"
     echo "  curl -s http://<AP_IP>/status"
+    echo
+    echo "A client showing a 169.254.x address got no DHCP answer at all."
+    echo "Watch for its request arriving while it reconnects:"
+    echo "  journalctl -u dnsmasq -f"
+    echo "Nothing appearing means the request never reached this machine,"
+    echo "which is the access point's wiring or mode, not this software."
 fi
 echo
